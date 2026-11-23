@@ -6,11 +6,41 @@
       <nz-tag [nzColor]="statusMeta().tone">{{ statusMeta().label }}</nz-tag>
     </div>
     <div class="panel-meta">
-      <span>{{ providerLabel() }}</span>
+      <span>{{ channels().length }} 个来源</span>
       @if (result().resultCount > 0) {
         <span>候选 {{ result().resultCount }}</span>
       }
     </div>
+  </div>
+
+  <div class="channel-list">
+    @for (channel of channels(); track channel.taskId) {
+      <div class="channel-card">
+        <div class="channel-head">
+          <span class="channel-name">{{ channel.providerLabel }}</span>
+          <nz-tag [nzColor]="channelStatus(channel).tone">
+            {{ channelStatus(channel).label }}
+          </nz-tag>
+        </div>
+        <div class="channel-meta">
+          {{ channel.sourceLabel }}
+          @if (channel.resultCount > 0) {
+            · {{ channel.resultCount }} 个
+          }
+          @if (channel.durationMs !== null) {
+            · {{ channelDuration(channel) }}
+          }
+        </div>
+        @if (channel.errorMessage) {
+          <div class="channel-error">
+            {{ channel.errorCode ? channel.errorCode + ' · ' : '' }}{{ channel.errorMessage }}
+          </div>
+        }
+        @if (channel.note) {
+          <div class="channel-note">{{ channel.note }}</div>
+        }
+      </div>
+    }
   </div>
 
   @if (isWorking()) {
@@ -39,13 +69,18 @@
   }
 
   @if (
-    result().status !== 'SUCCESS' &&
-    result().status !== 'EMPTY' &&
+    (result().status === 'PARTIAL_SUCCESS' ||
+      result().status === 'FAILED' ||
+      result().status === 'NOT_CONFIGURED') &&
     (result().products.length > 0 || result().uncertainProducts.length > 0)
   ) {
     <div class="note-line">
       <span nz-icon nzType="warning"></span>
-      <span>该平台最终状态为「{{ statusMeta().label }}」，以下为失败或中断前已采集并识别的部分商品。</span>
+      @if (result().status === 'PARTIAL_SUCCESS') {
+        <span>部分来源采集成功或存在产品级错误；以下为已成功采集并识别的部分商品。</span>
+      } @else {
+        <span>该平台最终状态为「{{ statusMeta().label }}」，以下为失败或中断前已采集并识别的部分商品。</span>
+      }
     </div>
   }
 

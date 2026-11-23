@@ -1,15 +1,13 @@
-import {
-  Injectable,
-  Logger,
-  OnApplicationBootstrap,
-} from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { ProductClassifierService, TargetDescriptor } from '../ai/product-classifier.service';
+import { TargetDescriptor } from '../ai/product-classifier.service';
 import {
   ALL_PLATFORMS,
+  PlatformEnum,
   PlatformTaskStatusEnum,
+  ProviderKeyEnum,
   SearchRunStatusEnum,
 } from '../common/enums';
 import {
@@ -19,15 +17,15 @@ import {
 } from '../common/errors/provider.errors';
 import { NormalizedProduct } from '../common/interfaces/normalized-product.interface';
 import { SearchOptions } from '../common/interfaces/provider.interface';
+import { PLATFORM_CHANNELS } from '../common/platform-channels';
 import { normalizeProductUrl } from '../common/utils/url.util';
 import { envInt } from '../database/typeorm.config';
-import {
-  PlatformSearchTask,
-  ProductCandidate,
-  ProductMatchResult,
-  SearchRun,
-} from '../entities';
+import { PlatformSearchTask, SearchRun } from '../entities';
 import { ProviderRegistryService } from '../providers/provider-registry.service';
+import {
+  AiMatchBudget,
+  CandidateAggregationService,
+} from './candidate-aggregation.service';
 
 @Injectable()
 export class SearchOrchestratorService implements OnApplicationBootstrap {
@@ -37,15 +35,11 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
   constructor(
     private readonly config: ConfigService,
     private readonly registry: ProviderRegistryService,
-    private readonly classifier: ProductClassifierService,
+    private readonly aggregation: CandidateAggregationService,
     @InjectRepository(SearchRun)
     private readonly runRepo: Repository<SearchRun>,
     @InjectRepository(PlatformSearchTask)
     private readonly taskRepo: Repository<PlatformSearchTask>,
-    @InjectRepository(ProductCandidate)
-    private readonly candidateRepo: Repository<ProductCandidate>,
-    @InjectRepository(ProductMatchResult)
-    private readonly matchRepo: Repository<ProductMatchResult>,
   ) {}
 
   /** 进程重启后，把未完成的任务标记为中断，不能假装成功 */
@@ -75,7 +69,7 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
     }
     if (unfinishedRuns.length > 0 || unfinishedTasks.length > 0) {
       this.logger.warn(
-        `启动恢复：${unfinishedRuns.length} 个未完成搜索标记为中断，${unfinishedTasks.length} 个平台任务标记为失败`,
+        `启动恢复：${unfinishedRuns.length} 个未完成搜索标记为中断，${unfinishedTasks.length} 个渠道任务标记为失败`,
       );
     }
   }
@@ -103,14 +97,14 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
       run.errorMessage = null;
       await this.runRepo.save(run);
 
-      const tasks = await this.taskRepo.find({
-        where: { searchRunId: searchId },
-      });
-      const ordered = ALL_PLATFORMS.map((platform) =>
-        tasks.find((task) => task.platform === platform),
-      ).filter((task): task is PlatformSearchTask => Boolean(task));
-
+      const tasks = await this.taskRepo.find({ where: { searchRunId: searchId } });
       const options = this.searchOptions();
+      const aiBudget: AiMatchBudget = {
+        remaining: Math.max(
+          0,
+          envInt(this.config.get<string>('THIRD_PARTY_MAX_AI_MATCHES_PER_PLATFORM'), 6),
+        ),
+      };
       const target: TargetDescriptor = {
         name: run.targetName,
         seriesName: run.seriesName,
@@ -118,9 +112,39 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
         referenceImagePath: run.referenceImage,
       };
 
-      for (const task of ordered) {
-        await this.runPlatform(run, task, target, options);
-        if (task !== ordered[ordered.length - 1] && options.requestDelayMs > 0) {
+      for (let index = 0; index < ALL_PLATFORMS.length; index += 1) {
+        const platform = ALL_PLATFORMS[index];
+        const platformTasks = this.orderPlatformTasks(tasks, platform);
+        if (platformTasks.length === 0) continue;
+
+        const candidates = await this.aggregation.loadCandidates(run.id, platform);
+        for (const task of platformTasks) {
+          await this.runChannel(run, task, target, options, platform, candidates, aiBudget);
+          if (options.requestDelayMs > 0 && task !== platformTasks[platformTasks.length - 1]) {
+            await this.sleep(options.requestDelayMs);
+          }
+        }
+
+        try {
+          const classification = await this.aggregation.classifyPending(
+            run.id,
+            platform,
+            target,
+          );
+          if (classification.classified > 0 || classification.failed > 0) {
+            this.logger.log(
+              `[${platform}] AI 识别完成：成功 ${classification.classified}，失败 ${classification.failed}`,
+            );
+          }
+        } catch (error) {
+          this.logger.warn(
+            `[${platform}] AI 识别阶段异常：${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+
+        if (index < ALL_PLATFORMS.length - 1 && options.requestDelayMs > 0) {
           await this.sleep(options.requestDelayMs);
         }
       }
@@ -133,14 +157,17 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
     }
   }
 
-  private async runPlatform(
+  private async runChannel(
     run: SearchRun,
     task: PlatformSearchTask,
     target: TargetDescriptor,
     options: SearchOptions,
+    platform: PlatformEnum,
+    candidates: Awaited<ReturnType<CandidateAggregationService['loadCandidates']>>,
+    aiBudget: AiMatchBudget,
   ): Promise<void> {
-    const provider = this.registry.get(task.platform);
-    task.providerType = provider.isConfigured() ? provider.providerType : null;
+    const provider = this.registry.get(task.platform, task.provider);
+    task.providerType = provider.providerType;
     task.resultCount = 0;
     task.errorCode = null;
     task.errorMessage = null;
@@ -150,7 +177,7 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
       const status = provider.getStatus();
       task.status = PlatformTaskStatusEnum.NOT_CONFIGURED;
       task.errorCode = 'PROVIDER_NOT_CONFIGURED';
-      task.errorMessage = status.reason ?? '该平台尚未配置可用的数据来源';
+      task.errorMessage = status.reason ?? '该来源尚未配置可用的数据';
       task.completedAt = new Date();
       await this.taskRepo.save(task);
       return;
@@ -163,7 +190,7 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
 
     try {
       const result = await provider.search(run.targetName, options);
-      const deduped = this.dedupe(result.products);
+      const deduped = this.dedupeProducts(result.products);
       const warnings = result.warnings ?? [];
       task.note = warnings.length > 0 ? warnings.join('\n') : null;
 
@@ -176,14 +203,24 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
       }
 
       let saved = 0;
+      let productErrors = 0;
       for (const product of deduped) {
         try {
-          const candidate = await this.persistCandidate(run.id, product);
-          await this.classifyCandidate(candidate, product, target);
+          await this.aggregation.ingest(
+            run.id,
+            platform,
+            product,
+            task,
+            candidates,
+            aiBudget,
+          );
           saved += 1;
         } catch (error) {
+          productErrors += 1;
           const message = error instanceof Error ? error.message : String(error);
-          this.logger.warn(`保存/识别候选商品失败：${message}`);
+          this.logger.warn(
+            `[${task.provider}] 保存/合并商品失败：${message}`,
+          );
           if (!task.errorMessage) {
             task.errorMessage = `部分商品处理失败：${message}`;
           }
@@ -191,9 +228,13 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
       }
 
       task.resultCount = saved;
-      task.status =
-        saved > 0 ? PlatformTaskStatusEnum.SUCCESS : PlatformTaskStatusEnum.FAILED;
-      if (saved === 0 && !task.errorCode) {
+      if (saved > 0) {
+        task.status =
+          productErrors > 0
+            ? PlatformTaskStatusEnum.PARTIAL_SUCCESS
+            : PlatformTaskStatusEnum.SUCCESS;
+      } else {
+        task.status = PlatformTaskStatusEnum.FAILED;
         task.errorCode = 'CANDIDATE_PERSIST_FAILED';
         task.errorMessage = task.errorMessage ?? '商品结果未能写入数据库';
       }
@@ -222,63 +263,31 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
         task.errorMessage = error instanceof Error ? error.message : String(error);
       }
       this.logger.warn(
-        `[${task.platform}] 采集结束：${task.status} ${task.errorCode ?? ''} ${task.errorMessage ?? ''}`,
+        `[${task.platform}/${task.provider}] 采集结束：${task.status} ${
+          task.errorCode ?? ''
+        } ${task.errorMessage ?? ''}`,
       );
       await this.taskRepo.save(task);
     }
   }
 
-  private async persistCandidate(
-    searchRunId: string,
-    product: NormalizedProduct,
-  ): Promise<ProductCandidate> {
-    const candidate = this.candidateRepo.create({
-      searchRunId,
-      platform: product.platform,
-      platformProductId: product.platformProductId?.slice(0, 200) ?? null,
-      title: product.title.slice(0, 500),
-      shopName: product.shopName ? product.shopName.slice(0, 250) : null,
-      productUrl: product.productUrl,
-      imageUrls: product.imageUrls.slice(0, 10),
-      description: product.description ?? null,
-      skuData: product.skuOptions ?? [],
-      priceData: product.price ?? null,
-      groupPriceData: product.groupPrice ?? null,
-      sourceType: product.sourceType,
-      rawData: product.rawData ?? null,
-      collectedAt: this.toDate(product.collectedAt),
-    });
-    return this.candidateRepo.save(candidate);
+  private orderPlatformTasks(
+    tasks: PlatformSearchTask[],
+    platform: PlatformEnum,
+  ): PlatformSearchTask[] {
+    const order = PLATFORM_CHANNELS.filter((channel) => channel.platform === platform).map(
+      (channel) => channel.provider,
+    );
+    return tasks
+      .filter((task) => task.platform === platform)
+      .sort((a, b) => {
+        const left = order.indexOf(a.provider as ProviderKeyEnum);
+        const right = order.indexOf(b.provider as ProviderKeyEnum);
+        return (left < 0 ? 99 : left) - (right < 0 ? 99 : right);
+      });
   }
 
-  private async classifyCandidate(
-    candidate: ProductCandidate,
-    product: NormalizedProduct,
-    target: TargetDescriptor,
-  ): Promise<void> {
-    const outcome = await this.classifier.classify(target, product, candidate.id);
-    const match = this.matchRepo.create({
-      candidateId: candidate.id,
-      matchStatus: outcome.matchStatus,
-      matchType: outcome.matchType,
-      confidence: outcome.confidence,
-      summary: outcome.summary,
-      reason: outcome.reason,
-      matchedContents: outcome.matchedContents,
-      matchedSkuIds: outcome.matchedSkuIds,
-      skuDecisions: outcome.skuDecisions,
-      evidence: outcome.evidence,
-      aiStatus: outcome.aiStatus,
-      aiModel: outcome.model,
-      aiRawResponse: outcome.rawResponse,
-      aiError: outcome.error,
-      needsManualReview: outcome.needsManualReview,
-      classifiedAt: new Date(),
-    });
-    await this.matchRepo.save(match);
-  }
-
-  private dedupe(products: NormalizedProduct[]): NormalizedProduct[] {
+  private dedupeProducts(products: NormalizedProduct[]): NormalizedProduct[] {
     const seen = new Set<string>();
     const result: NormalizedProduct[] = [];
     for (const product of products) {
@@ -327,11 +336,6 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
         await this.taskRepo.save(task);
       }
     }
-  }
-
-  private toDate(value: string): Date {
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? new Date() : date;
   }
 
   private sleep(ms: number): Promise<void> {

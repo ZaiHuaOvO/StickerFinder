@@ -6,6 +6,7 @@ import {
   PlatformSearchTask,
   ProductCandidate,
   ProductMatchResult,
+  ProductObservation,
   SearchRun,
 } from '../entities';
 
@@ -25,7 +26,13 @@ export function buildTypeOrmOptions(config: ConfigService): TypeOrmModuleOptions
   const dbType = (config.get<string>('DB_TYPE') ?? 'mysql').toLowerCase();
   const synchronize = envBool(config.get<string>('DB_SYNCHRONIZE'), true);
   const logging = envBool(config.get<string>('DB_LOGGING'), false);
-  const entities = [SearchRun, PlatformSearchTask, ProductCandidate, ProductMatchResult];
+  const entities = [
+    SearchRun,
+    PlatformSearchTask,
+    ProductCandidate,
+    ProductObservation,
+    ProductMatchResult,
+  ];
 
   if (dbType === 'sqlite') {
     const database = resolve(

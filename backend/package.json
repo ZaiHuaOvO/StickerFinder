@@ -1,6 +1,6 @@
 {
   "name": "stickerfinder-backend",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "StickerFinder 后端：跨平台造景贴纸商品检索 Demo",
   "scripts": {
@@ -8,7 +8,7 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main.js",
-    "test": "node --test -r ts-node/register test/core.test.ts test/classifier.test.ts",
+    "test": "node --test -r ts-node/register test/core.test.ts test/classifier.test.ts test/third-party.test.ts",
     "db:create": "node scripts/create-database.js",
     "check:config": "node scripts/check-config.js",
     "browser:login": "node scripts/browser-login.js",

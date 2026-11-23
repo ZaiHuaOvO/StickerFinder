@@ -11,6 +11,7 @@ import {
   PlatformTaskStatusEnum,
   SearchRunStatusEnum,
 } from '../common/enums';
+import { PLATFORM_CHANNELS } from '../common/platform-channels';
 import { ProductMatchResult, PlatformSearchTask, ProductCandidate, SearchRun } from '../entities';
 import { ProviderRegistryService } from '../providers/provider-registry.service';
 import { getReferenceImageDir } from '../uploads/uploads.util';
@@ -54,10 +55,12 @@ export class SearchService {
 
     await this.runRepo.manager.transaction(async (manager) => {
       await manager.save(run);
-      const tasks = ALL_PLATFORMS.map((platform) =>
+      const tasks = PLATFORM_CHANNELS.map((channel) =>
         manager.create(PlatformSearchTask, {
           searchRunId: run.id,
-          platform,
+          platform: channel.platform,
+          provider: channel.provider,
+          providerType: channel.providerType,
           status: PlatformTaskStatusEnum.PENDING,
         }),
       );
@@ -74,17 +77,14 @@ export class SearchService {
       throw new NotFoundException('搜索任务不存在');
     }
     const tasks = await this.taskRepo.find({ where: { searchRunId: id } });
-    const orderedTasks = ALL_PLATFORMS.map((platform) =>
-      tasks.find((task) => task.platform === platform),
-    ).filter((task): task is PlatformSearchTask => Boolean(task));
 
     const candidates = await this.candidateRepo.find({
       where: { searchRunId: id },
-      relations: { matchResult: true },
+      relations: { matchResult: true, observations: true },
       order: { collectedAt: 'ASC' },
     });
 
-    return toSearchDetailDto(run, orderedTasks, candidates);
+    return toSearchDetailDto(run, tasks, candidates);
   }
 
   async listSearches(limit = 20) {
@@ -106,7 +106,7 @@ export class SearchService {
   async reviewCandidate(candidateId: string, dto: ReviewCandidateDto) {
     const candidate = await this.candidateRepo.findOne({
       where: { id: candidateId },
-      relations: { matchResult: true },
+      relations: { matchResult: true, observations: true },
     });
     if (!candidate) {
       throw new NotFoundException('候选商品不存在');

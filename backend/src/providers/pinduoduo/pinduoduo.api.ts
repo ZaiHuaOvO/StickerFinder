@@ -2,7 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { createHash } from 'crypto';
-import { PlatformEnum, PriceTypeEnum, SourceTypeEnum } from '../../common/enums';
+import {
+  ObservationSourceEnum,
+  PlatformEnum,
+  PriceTypeEnum,
+  ProviderKeyEnum,
+  SourceTypeEnum,
+} from '../../common/enums';
 import { ProviderError, ParseFailedError } from '../../common/errors/provider.errors';
 import { NormalizedProduct } from '../../common/interfaces/normalized-product.interface';
 import { PriceInfo } from '../../common/interfaces/price.interface';
@@ -242,6 +248,12 @@ export class PinduoduoApiClient {
       price: mainPrice,
       groupPrice: groupPriceInfo,
       sourceType: SourceTypeEnum.OFFICIAL_API,
+      source: ObservationSourceEnum.OFFICIAL_API,
+      providerKey: ProviderKeyEnum.PDD_DDK,
+      sourceProductId: platformProductId,
+      salesText: good.sales_tip ?? undefined,
+      region: null,
+      regionNote: null,
       collectedAt: observedAt,
       rawData: {
         goods_id: good.goods_id,

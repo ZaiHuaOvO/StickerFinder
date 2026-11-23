@@ -115,7 +115,35 @@
 
 ## 3. 抖音
 
-### 3.1 采集方式
+抖音同时使用两个独立渠道：
+
+1. **Qovia 第三方商品搜索 API**（`qovia`）。
+2. **Playwright 正常网页采集**（`playwright`）。
+
+两个渠道分别创建任务、分别记录状态、耗时、错误；一个失败不会阻止另一个执行。
+
+### 3.1 Qovia 第三方 API
+
+- **Endpoint**：`GET https://api.qovia.ai/v1/raw/douyin/goods_search`
+- **认证**：`Authorization: Bearer $QOVIA_API_KEY`
+- **参数（仅这三个）**：
+  - `keyword`：搜索词，最长 100 字符。
+  - `page`：页码，从 1 开始，最大 50，约 30 条/页。
+  - `search_id`：第一页省略；后续页传上一页 `extra.search_id`。
+- **响应**：`{ request_id, data, meta }`；`data.promotions`、`data.summary_promotions`、`data.has_more`、`data.extra.search_id`；空结果通过 `meta.empty=true` 表示。
+- **字段映射**：
+  - `product_id` → `platformProductId` / `sourceProductId`。
+  - `promotions[].base_info.title` 或 `summary_promotions[].base_model.product_info.name` → 标题。
+  - `base_info.detail_url` → 商品链接；缺失时用商品 ID 生成抖音商品详情 URL。
+  - `base_info.main_img.url_list` → 图片。
+  - `summary_promotions[].base_model.shop_info.shop_name` → 店铺。
+  - `price.origin`（分）→ 价格（元）；`price_text`（例如“到手价”）写入价格说明，`priceType = LISTING`，不冒充 SKU 价。
+  - `month_sale.origin` → 销量描述；`good_ratio` 保留在原始数据。
+- **地区**：Qovia 文档未声明数据地区；观察记录标记“未确认中国大陆可购买性”。
+- **费用**：Qovia 文档标价约 $0.02536/次成功调用（Live Beta），失败/空结果不计费；本项目只做低频查询，且不保证额度。
+- **稳定性**：接口为 Live Beta，字段可能变化；解析失败时返回 `PARSE_FAILED`，不编造商品。
+
+### 3.2 Playwright 网页采集
 
 抖音使用 Playwright 打开正常网页搜索：
 
@@ -124,8 +152,6 @@ https://www.douyin.com/search/{关键词}?type=goods
 ```
 
 若商品 Tab 未出现商品卡片，会回退到 `type=general` 再尝试一次。不会调用抖店商家商品管理 API 冒充全站搜索。
-
-### 3.2 登录
 
 首次使用前：
 
@@ -137,47 +163,71 @@ npm run browser:login -- douyin
 - 登录态保存在 `backend/.auth/douyin/`（持久化用户目录），后续自动复用。
 - 该目录已加入 `.gitignore`，绝不能提交。
 
-也可以通过 `BROWSER_USER_DATA_DIR` 修改目录。
+解析策略：
 
-### 3.3 解析策略
+- 等待页面渲染后扫描 `a[href]`，只保留指向商品详情的链接：`haohuo.jinritemai.com`、`douyin.com/goods/`、`douyin.com/product/`、包含 `item2` 的链接。
+- 标题取链接的 `title` 或文本；价格使用统一可见价格解析：
+  - 单个 `¥` 金额：`LISTING`，注明未确认具体 SKU。
+  - 带“起”：`LOWEST_SKU`，展示“¥x 起”。
+  - 区间价：`amount = null`，展示区间，不取平均或最低值。
+  - “券后 / 到手价 / 折后 / 活动价”：`amount = null`、`priceType = UNKNOWN`，仅保留页面可见金额说明。
+- 图片取卡片内 `img` 的 `currentSrc/src`；同一链接去重。
 
-- 等待页面渲染后扫描 `a[href]`，只保留指向商品详情的链接：
-  - `haohuo.jinritemai.com`
-  - `douyin.com/goods/`
-  - `douyin.com/product/`
-  - 包含 `item2` 的链接
-- 标题取链接的 `title` 或文本；价格从卡片文本中提取：
-  - 单个 `¥` 金额：作为页面展示价（`LISTING`），注明未确认具体 SKU。
-  - 带“起”的金额：作为起售价（`LOWEST_SKU`），展示“¥x 起”。
-  - 区间价（如 `¥5-¥10`）：不取平均值或最低值，`amount = null`，展示区间并注明无法确认具体 SKU。
-  - “券后 / 到手价 / 折后 / 活动价”等：不当作普通现价，`amount = null`、`priceType = UNKNOWN`，仅在说明中保留页面可见金额。
-- 图片取卡片内 `img` 的 `currentSrc/src`。
-- 同一链接去重，最多返回搜索限制内的数量。
+页面结构变化时返回 `PARSE_FAILED`，不会编造商品。
 
-这是 **实验性 DOM 解析**：抖音页面结构、登录门槛和风控策略会变化。页面结构变化时返回 `PARSE_FAILED`，不会编造商品。
+### 3.3 错误分类
 
-### 3.4 错误分类
-
-| 情况 | 结果 |
+| 情况 | 渠道结果 |
 |---|---|
-| 未登录 / 出现登录提示 | `BLOCKED`，`LOGIN_REQUIRED` |
-| 出现验证码/安全验证/访问异常 | `BLOCKED`，`BLOCKED_BY_PLATFORM` |
-| 页面明确显示暂无相关结果 | `EMPTY` |
-| 页面可访问但没有可识别商品卡片，也没有明确无结果提示 | `FAILED`，`PARSE_FAILED` |
-| Chromium 未安装 | `NOT_CONFIGURED`，提示运行 `npm run playwright:install` |
-| 浏览器通道关闭 | `NOT_CONFIGURED` |
+| Qovia Key 未配置 | `NOT_CONFIGURED` |
+| Qovia 401 / scope / 余额不足等 | `FAILED`，`QOVIA_API_ERROR` |
+| Qovia 响应字段异常 | `FAILED`，`PARSE_FAILED` |
+| Playwright 未登录 / 出现登录提示 | `BLOCKED`，`LOGIN_REQUIRED` |
+| Playwright 验证码/安全验证/访问异常 | `BLOCKED`，`BLOCKED_BY_PLATFORM` |
+| Playwright 页面明确暂无结果 | `EMPTY` |
+| Playwright 无商品卡片且无明确空结果提示 | `FAILED`，`PARSE_FAILED` |
+| Chromium 未安装 | `NOT_CONFIGURED` |
 
-### 3.5 限制
+平台聚合：一个渠道有数据、另一个渠道未配置/为空/失败 → `PARTIAL_SUCCESS`；两个渠道均成功 → `SUCCESS`；均无数据且至少一个失败 → `FAILED`；均无数据且均空 → `EMPTY`；全部未配置 → `NOT_CONFIGURED`。
+
+### 3.4 限制
 
 - 不自动破解验证码、不绕过登录、不使用无限重试或代理轮换。
-- 当前只提取列表页可见信息，没有进入商品详情页解析 SKU；SKU 未知时 AI 返回 `UNCERTAIN`。
+- 当前 Playwright 只提取列表页可见信息，没有进入详情页解析 SKU；SKU 未知时 AI 返回 `UNCERTAIN`。
+- Qovia 数据地区未声明，价格必须人工核对。
 - 抖音网页端商品搜索可能需要登录，实际可用性以账号与页面为准。
 
 ---
 
 ## 4. 小红书
 
-### 4.1 采集方式
+小红书同时使用两个独立渠道：
+
+1. **OKData 小红书商城商品搜索 API**（`okdata`）。
+2. **Playwright 正常网页采集**（`playwright`）。
+
+两个渠道分别创建任务、分别记录状态与错误。
+
+### 4.1 OKData 第三方 API
+
+- **Endpoint**：`GET https://api.okdata.online/v1/xiaohongshu/shop/products/search`
+- **认证**：`Authorization: Bearer $OKDATA_API_KEY`
+- **参数**：
+  - `query`：必填，关键词。
+  - `cursor`：可选，上一页 `page.next_cursor`。
+  - `view`：本项目使用 `standard`，以获取 `original_price` 与 `images`。
+  - `fields`：可选，本项目未使用。
+- **响应**：`data.items`（约 20 个/页）、`page.next_cursor`、`page.has_more`、`meta`；`code` 必须为 `ok`。
+- **商品字段**：`id`、`url`、`title`、`price`（最低规格现价）、`original_price`、`currency`、`sold`、`rating`、`reviews`、`images[]`、`shop{id,name,url}`。
+- **映射**：
+  - `id` → `platformProductId`；`url` → 商品链接；`shop.name` → 店铺。
+  - `price` → 最低规格价格，`priceType = LOWEST_SKU`，注明未确认目标 SKU。
+  - `original_price` → 原价字段，保留在观察记录与前端。
+  - `currency` 原样保存；为空时标记 `UNKNOWN`，不假定为 CNY。
+- **地区限制**：OKData 文档说明其小红书商品详情为 **海外 App 用户视角**，促销可能与大陆用户不同。观察记录设置 `region = overseas_app_view`，并提示“未确认中国大陆可购买性”。
+- **费用与稳定性**：约 $0.02/次；接口为 Preview，字段可能变化；解析失败返回 `PARSE_FAILED`。
+
+### 4.2 Playwright 网页采集
 
 ```text
 https://www.xiaohongshu.com/search_result?keyword={关键词}&source=web_search_result_notes&type=51
@@ -185,7 +235,7 @@ https://www.xiaohongshu.com/search_result?keyword={关键词}&source=web_search_
 
 使用 Playwright 正常网页访问；不把开放平台授权接口当作全站搜索入口。
 
-### 4.2 登录
+首次使用前：
 
 ```powershell
 npm run browser:login -- xiaohongshu
@@ -193,21 +243,21 @@ npm run browser:login -- xiaohongshu
 
 登录态保存在 `backend/.auth/xiaohongshu/`。
 
-### 4.3 解析策略
+解析策略：
 
-- 扫描页面链接：
-  - 商品相关：链接中包含 `goods` / `item` / `product`，且域名属于 `xiaohongshu.com` / `xhslink.com`。
-  - 笔记链接（`/explore/`、`/discovery_item/`、`/discovery/item/`）只计数，不作为商品。
-- 如果只找到笔记、没有商品链接：返回 `FAILED` / `PARSE_FAILED`，消息明确指出“只返回了笔记，不能把笔记内容当作商品数据”。
-- 如果页面明确显示暂无相关结果：返回 `EMPTY`。
-- 如果页面要求登录：`BLOCKED` / `LOGIN_REQUIRED`。
-- 如果出现验证码/异常访问：`BLOCKED` / `BLOCKED_BY_PLATFORM`。
+- 商品相关链接：链接中包含 `goods` / `item` / `product`，且域名属于 `xiaohongshu.com` / `xhslink.com`。
+- 笔记链接（`/explore/`、`/discovery_item/`、`/discovery/item/`）只计数，不作为商品。
+- 只找到笔记、没有商品链接：`FAILED` / `PARSE_FAILED`，明确提示不能把笔记当作商品。
+- 页面明确无结果：`EMPTY`。
+- 登录/验证码/异常访问：`BLOCKED`。
+- 价格使用统一可见价格解析，不把券后价、区间价或起售价冒充普通现价。
 
-### 4.4 限制
+### 4.3 限制与地区
 
-- 小红书搜索结果大量是笔记，商品卡片可能不出现或需要登录/特定入口；当前不会伪造商品。
-- 标题、图片、价格均为页面可见文本；SKU 无法确认时 AI 返回 `UNCERTAIN`。
-- 当前未进入商品详情页解析 SKU。
+- 小红书搜索结果大量是笔记，商品卡片可能不出现或需要登录/特定入口；不会伪造商品。
+- 当前未进入商品详情页解析 SKU；SKU 无法确认时 AI 返回 `UNCERTAIN`。
+- 第三方 API 的地区/促销差异必须通过观察记录和前端提示保留，不能把海外视角价格当作大陆默认价格。
+- 需要人工核对商品链接、店铺、SKU 与实际购买地区。
 
 ---
 
@@ -225,12 +275,41 @@ npm run browser:login -- xiaohongshu
 
 ## 6. 第三方数据服务
 
-`PRODUCT_DATA_API_KEY` 与 `PRODUCT_DATA_API_BASE_URL` 已预留，但当前 **没有实现** 任何第三方 Adapter。不要用环境变量伪装“已接入”；如后续接入，必须：
+当前已实现：
+
+- **Qovia**：抖音商品搜索（`qovia`），环境变量 `QOVIA_API_KEY`。
+- **OKData**：小红书商城商品搜索（`okdata`），环境变量 `OKDATA_API_KEY`。
+
+预留但未实现 Adapter：
+
+- `BAMBOO_API_KEY`（竹简/Bamboo）
+- `SOCIALTOAI_API_KEY`（SocialToAI）
+
+接入第三方服务必须：
 
 - 使用合规服务与合法数据来源。
-- 记录 `sourceType = third_party`。
-- 保留原始响应（脱敏）与采集时间。
+- 记录 `provider` 与 `source = third_party_api`。
+- 保存原始响应（脱敏、限制体积）与采集时间。
+- 记录服务商声明的地区限制；无法确认中国大陆可购买性时标记为不确定。
 - 不绕过平台访问限制。
+- 不把第三方返回价格直接当作大陆用户实付价。
+
+### 6.1 配置步骤
+
+Qovia：
+
+1. 在 <https://qovia.ai/console/?tab=keys> 创建 API Key（以 `sk-qovia-` 开头）。
+2. 确认 Key 具备 `raw:douyin` 或 `raw:*` scope。
+3. 在根目录 `.env` 填入 `QOVIA_API_KEY`；可选修改 `QOVIA_BASE_URL`。
+4. 运行 `npm run check:config`，再运行 `npm run check:config -- --live`（会产生约 $0.025 的调用费用）。
+
+OKData：
+
+1. 在 <https://okdata.online/> 创建 API Key（以 `okd_` 开头）。
+2. 在根目录 `.env` 填入 `OKDATA_API_KEY`；可选修改 `OKDATA_BASE_URL`。
+3. 运行 `npm run check:config`，再运行 `npm run check:config -- --live`（会产生约 $0.02 的调用费用）。
+
+两者都不需要平台账号、Cookie 或扫码登录；但必须遵守服务条款与数据使用限制。`check:config` 不会打印密钥。
 
 ---
 

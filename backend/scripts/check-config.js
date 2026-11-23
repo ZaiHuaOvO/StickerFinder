@@ -180,6 +180,102 @@ async function checkDeepseek() {
   }
 }
 
+async function checkQovia() {
+  const configured = checkPresence('QOVIA_API_KEY');
+  if (!configured) {
+    record('Qovia API', 'SKIP', '缺少配置，未发起请求');
+    return;
+  }
+  if (!LIVE) {
+    record('Qovia API', 'PENDING', '密钥已填写，加 --live 发起真实搜索请求（约 $0.025/次）');
+    return;
+  }
+
+  const baseUrl = (value('QOVIA_BASE_URL') || 'https://api.qovia.ai').replace(/\/+$/, '');
+  try {
+    const response = await axios.get(`${baseUrl}/v1/raw/douyin/goods_search`, {
+      params: { keyword: '贴纸', page: '1' },
+      timeout: 45000,
+      headers: {
+        Authorization: `Bearer ${value('QOVIA_API_KEY')}`,
+        Accept: 'application/json',
+      },
+    });
+    const data = response.data ?? {};
+    if (data.error) {
+      record(
+        'Qovia API',
+        'FAIL',
+        [data.error.code, data.error.message].filter(Boolean).join(' / '),
+      );
+      return;
+    }
+    if (data.meta?.empty) {
+      record('Qovia API', 'OK', '鉴权通过；测试关键词无结果（Empty 不计费）');
+      return;
+    }
+    const count = Array.isArray(data.data?.summary_promotions)
+      ? data.data.summary_promotions.length
+      : Array.isArray(data.data?.promotions)
+        ? data.data.promotions.length
+        : 0;
+    record('Qovia API', 'OK', `鉴权通过，返回 ${count} 个商品卡片（测试关键词：贴纸）`);
+  } catch (error) {
+    const body = error.response?.data;
+    const detail =
+      body?.error?.code || body?.error?.message
+        ? [body.error.code, body.error.message].filter(Boolean).join(' / ')
+        : error.response?.status
+          ? `HTTP ${error.response.status}`
+          : String(error.message).slice(0, 200);
+    record('Qovia API', 'FAIL', detail);
+  }
+}
+
+async function checkOkData() {
+  const configured = checkPresence('OKDATA_API_KEY');
+  if (!configured) {
+    record('OKData API', 'SKIP', '缺少配置，未发起请求');
+    return;
+  }
+  if (!LIVE) {
+    record('OKData API', 'PENDING', '密钥已填写，加 --live 发起真实搜索请求（约 $0.02/次）');
+    return;
+  }
+
+  const baseUrl = (value('OKDATA_BASE_URL') || 'https://api.okdata.online').replace(/\/+$/, '');
+  try {
+    const response = await axios.get(`${baseUrl}/v1/xiaohongshu/shop/products/search`, {
+      params: { query: '贴纸', view: 'compact' },
+      timeout: 45000,
+      headers: {
+        Authorization: `Bearer ${value('OKDATA_API_KEY')}`,
+        Accept: 'application/json',
+      },
+    });
+    const body = response.data ?? {};
+    if (body.code !== 'ok') {
+      record(
+        'OKData API',
+        'FAIL',
+        [body.code, body.message_zh || body.message].filter(Boolean).join(' / '),
+      );
+      return;
+    }
+    const count = Array.isArray(body.data?.items) ? body.data.items.length : 0;
+    record('OKData API', 'OK', `鉴权通过，返回 ${count} 个商品（测试关键词：贴纸；海外视角，未确认大陆可购买性）`);
+  } catch (error) {
+    const body = error.response?.data;
+    const detail =
+      body?.code || body?.message
+        ? [body.code, body.message_zh || body.message].filter(Boolean).join(' / ')
+        : error.response?.status
+          ? `HTTP ${error.response.status}`
+          : String(error.message).slice(0, 200);
+    record('OKData API', 'FAIL', detail);
+  }
+}
+
 async function checkTaobao() {
   const appKeyOk = checkPresence('TAOBAO_APP_KEY');
   const secretOk = checkPresence('TAOBAO_APP_SECRET');
@@ -348,6 +444,8 @@ async function main() {
 
   await checkDatabase();
   await checkDeepseek();
+  await checkQovia();
+  await checkOkData();
   await checkTaobao();
   await checkPinduoduo();
   checkPlaywright();

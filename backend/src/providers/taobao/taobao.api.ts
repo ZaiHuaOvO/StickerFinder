@@ -2,7 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios from 'axios';
 import { createHash } from 'crypto';
-import { PlatformEnum, PriceTypeEnum, SourceTypeEnum } from '../../common/enums';
+import {
+  ObservationSourceEnum,
+  PlatformEnum,
+  PriceTypeEnum,
+  ProviderKeyEnum,
+  SourceTypeEnum,
+} from '../../common/enums';
 import { ProviderError, ParseFailedError } from '../../common/errors/provider.errors';
 import { NormalizedProduct } from '../../common/interfaces/normalized-product.interface';
 import { SearchOptions } from '../../common/interfaces/provider.interface';
@@ -203,11 +209,31 @@ export class TaobaoApiClient {
     const amount = Number.isFinite(priceNumber) && priceNumber > 0
       ? Math.round(priceNumber * 100) / 100
       : null;
+    const originalNumber = Number.parseFloat(item.reserve_price ?? '');
+    const originalAmount =
+      Number.isFinite(originalNumber) && originalNumber > 0
+        ? Math.round(originalNumber * 100) / 100
+        : null;
 
     const images = [item.pict_url ?? item.item_basic_info?.pict_url ?? '']
       .concat(item.small_images?.string ?? [])
       .map((url) => toHttpUrl(url))
       .filter((url): url is string => Boolean(url));
+
+    const observedAt = nowIso();
+    const originalPrice =
+      originalAmount !== null && amount !== null && originalAmount > amount
+        ? {
+            amount: originalAmount,
+            currency: 'CNY',
+            displayText: `¥${originalAmount.toFixed(2)}`,
+            priceType: PriceTypeEnum.LISTING,
+            priceSource: 'taobao_tbk_api',
+            observedAt,
+            shippingIncluded: 'unknown' as const,
+            note: '接口返回的折前原价（reserve_price）',
+          }
+        : null;
 
     return {
       platform: PlatformEnum.TAOBAO,
@@ -223,15 +249,25 @@ export class TaobaoApiClient {
         displayText: amount !== null ? `¥${amount.toFixed(2)}` : '未获取',
         priceType: amount !== null ? PriceTypeEnum.LISTING : PriceTypeEnum.UNKNOWN,
         priceSource: 'taobao_tbk_api',
-        observedAt: nowIso(),
+        observedAt,
         shippingIncluded: 'unknown',
+        originalAmount,
+        originalDisplayText:
+          originalPrice !== null ? originalPrice.displayText : null,
         note:
           amount !== null
             ? '淘宝客接口返回的商品展示价，未确认具体 SKU'
             : '接口未返回可解析的当前价格',
       },
+      originalPrice,
       sourceType: SourceTypeEnum.OFFICIAL_API,
-      collectedAt: nowIso(),
+      source: ObservationSourceEnum.OFFICIAL_API,
+      providerKey: ProviderKeyEnum.TAOBAO_TBK,
+      sourceProductId: platformProductId,
+      salesText: item.volume !== undefined ? `销量 ${item.volume}` : undefined,
+      region: null,
+      regionNote: null,
+      collectedAt: observedAt,
       rawData: {
         item_id: item.item_id,
         zk_final_price: item.zk_final_price,

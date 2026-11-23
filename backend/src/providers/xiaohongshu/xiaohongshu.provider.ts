@@ -4,7 +4,7 @@ import {
   NotConfiguredError,
   ParseFailedError,
 } from '../../common/errors/provider.errors';
-import { PlatformEnum, SourceTypeEnum } from '../../common/enums';
+import { PlatformEnum, ProviderKeyEnum, SourceTypeEnum, ObservationSourceEnum } from '../../common/enums';
 import { NormalizedProduct } from '../../common/interfaces/normalized-product.interface';
 import {
   PlatformProvider,
@@ -44,9 +44,11 @@ const NO_RESULT_HINTS = [
 ];
 
 @Injectable()
-export class XiaohongshuProvider implements PlatformProvider {
+export class XiaohongshuPlaywrightProvider implements PlatformProvider {
   readonly platform = PlatformEnum.XIAOHONGSHU;
+  readonly key = ProviderKeyEnum.PLAYWRIGHT;
   readonly providerType = SourceTypeEnum.BROWSER;
+  readonly source = ObservationSourceEnum.PLAYWRIGHT;
 
   constructor(private readonly browser: BrowserService) {}
 
@@ -218,6 +220,12 @@ export class XiaohongshuProvider implements PlatformProvider {
         skuOptions: [],
         price: parseVisiblePrice(card.priceText, 'xiaohongshu_page'),
         sourceType: SourceTypeEnum.BROWSER,
+        source: ObservationSourceEnum.PLAYWRIGHT,
+        providerKey: ProviderKeyEnum.PLAYWRIGHT,
+        sourceProductId: platformProductId,
+        region: 'local_browser',
+        regionNote:
+          '来自本机登录浏览器的小红书页面，价格与账号地区、登录状态和促销有关',
         collectedAt: observedAt,
         rawData: {
           href: card.url,

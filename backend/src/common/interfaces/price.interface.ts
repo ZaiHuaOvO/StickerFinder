@@ -5,13 +5,16 @@ export type ShippingIncluded = 'unknown' | 'included' | 'not_included';
 export interface PriceInfo {
   /** 无法提取时必须为 null，禁止用 0 代替 */
   amount: number | null;
-  currency: 'CNY';
+  currency: string;
   displayText: string;
   priceType: PriceTypeEnum;
   priceSource: string;
   /** ISO 8601，带本地时区偏移 */
   observedAt: string;
   shippingIncluded: ShippingIncluded;
+  /** 折前原价（有则保留） */
+  originalAmount?: number | null;
+  originalDisplayText?: string | null;
   /** 价格说明，例如“最低 SKU 起售价”“需拼团” */
   note?: string;
   /** 拼多多等平台的拼团价，作为补充信息单独保留 */

@@ -1,6 +1,7 @@
 import {
   MatchStatus,
   MatchType,
+  ObservationSource,
   Platform,
   PriceType,
   SourceType,
@@ -12,8 +13,12 @@ export const PLATFORM_META: Record<
   { label: string; tone: string; providerHint: string }
 > = {
   taobao: { label: '淘宝', tone: 'taobao', providerHint: '淘宝客 API' },
-  douyin: { label: '抖音', tone: 'douyin', providerHint: '浏览器采集' },
-  xiaohongshu: { label: '小红书', tone: 'xiaohongshu', providerHint: '浏览器采集' },
+  douyin: { label: '抖音', tone: 'douyin', providerHint: 'Qovia + Playwright' },
+  xiaohongshu: {
+    label: '小红书',
+    tone: 'xiaohongshu',
+    providerHint: 'OKData + Playwright',
+  },
   pinduoduo: { label: '拼多多', tone: 'pinduoduo', providerHint: '多多进宝 API' },
 };
 
@@ -21,10 +26,27 @@ export const TASK_STATUS_META: Record<TaskStatus, { label: string; tone: string 
   PENDING: { label: '等待中', tone: 'default' },
   RUNNING: { label: '采集中', tone: 'processing' },
   SUCCESS: { label: '采集成功', tone: 'success' },
+  PARTIAL_SUCCESS: { label: '部分成功', tone: 'warning' },
   EMPTY: { label: '无结果', tone: 'default' },
   FAILED: { label: '采集失败', tone: 'error' },
   NOT_CONFIGURED: { label: '未配置', tone: 'warning' },
   BLOCKED: { label: '需人工处理', tone: 'error' },
+};
+
+export const PROVIDER_META: Record<string, { label: string }> = {
+  qovia: { label: 'Qovia 第三方 API' },
+  bamboo: { label: 'Bamboo 第三方 API' },
+  okdata: { label: 'OKData 第三方 API' },
+  socialtoai: { label: 'SocialToAI 第三方 API' },
+  playwright: { label: 'Playwright 浏览器' },
+  taobao_tbk: { label: '淘宝客 API' },
+  pdd_ddk: { label: '多多进宝 API' },
+};
+
+export const OBSERVATION_SOURCE_META: Record<ObservationSource, string> = {
+  official_api: '官方 API',
+  third_party_api: '第三方数据 API',
+  playwright: 'Playwright 浏览器',
 };
 
 export const MATCH_TYPE_META: Record<MatchType, { label: string; description: string }> = {
@@ -87,4 +109,10 @@ export function formatDateTime(value: string | null | undefined): string {
 export function formatConfidence(value: number | null | undefined): string {
   if (value === null || value === undefined) return '—';
   return `${Math.round(value * 100)}%`;
+}
+
+export function formatDuration(value: number | null | undefined): string {
+  if (value === null || value === undefined) return '—';
+  if (value < 1000) return `${value}ms`;
+  return `${(value / 1000).toFixed(1)}s`;
 }

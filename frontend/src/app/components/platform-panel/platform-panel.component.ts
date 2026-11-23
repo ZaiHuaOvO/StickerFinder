@@ -5,8 +5,12 @@ import { NzEmptyModule } from 'ng-zorro-antd/empty';
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NzSpinModule } from 'ng-zorro-antd/spin';
 import { NzTagModule } from 'ng-zorro-antd/tag';
-import { PLATFORM_META, TASK_STATUS_META } from '../../core/labels';
-import { PlatformResult, Product } from '../../core/models';
+import {
+  formatDuration,
+  PLATFORM_META,
+  TASK_STATUS_META,
+} from '../../core/labels';
+import { ChannelResult, PlatformResult, Product } from '../../core/models';
 import { ProductCardComponent } from '../product-card/product-card.component';
 
 @Component({
@@ -32,6 +36,13 @@ export class PlatformPanelComponent {
   readonly isWorking = computed(
     () => this.result().status === 'PENDING' || this.result().status === 'RUNNING',
   );
+  readonly channels = computed(() => this.result().channels ?? []);
+  readonly successfulChannelCount = computed(
+    () =>
+      this.channels().filter(
+        (channel) => channel.status === 'SUCCESS' || channel.status === 'PARTIAL_SUCCESS',
+      ).length,
+  );
   readonly bannerTitle = computed(() => {
     const result = this.result();
     switch (result.status) {
@@ -39,13 +50,13 @@ export class PlatformPanelComponent {
       case 'RUNNING':
         return '正在采集该平台…';
       case 'NOT_CONFIGURED':
-        return '该平台尚未配置可用的数据来源';
+        return '该平台的来源均未配置';
       case 'FAILED':
         return '采集失败';
-      case 'BLOCKED':
-        return '平台要求人工处理';
       case 'EMPTY':
         return '未找到符合条件的商品';
+      case 'PARTIAL_SUCCESS':
+        return '部分来源采集成功';
       case 'SUCCESS':
         return result.matchedCount > 0
           ? `找到 ${result.matchedCount} 个匹配商品`
@@ -59,17 +70,28 @@ export class PlatformPanelComponent {
     switch (result.status) {
       case 'PENDING':
       case 'RUNNING':
-        return '请稍候，页面会自动刷新结果。';
+        return '请稍候，页面会自动刷新各来源结果。';
       case 'NOT_CONFIGURED':
-        return result.errorMessage ?? '未配置凭证或采集通道。';
+        return (
+          result.errorMessage ??
+          this.channels()
+            .map((channel) => `${channel.providerLabel}：${channel.errorMessage ?? '未配置'}`)
+            .join('；')
+        );
       case 'FAILED':
-        return [result.errorCode, result.errorMessage].filter(Boolean).join(' · ');
-      case 'BLOCKED':
-        return result.errorMessage ?? '请先在可见浏览器中完成登录或验证。';
+        return (
+          result.errorMessage ??
+          this.channels()
+            .filter((channel) => channel.errorCode)
+            .map((channel) => `${channel.providerLabel}：${channel.errorMessage ?? channel.errorCode}`)
+            .join('；')
+        );
       case 'EMPTY':
-        return '平台可正常访问，但本次搜索没有返回候选商品。空结果不等于采集失败。';
+        return '已配置的来源可正常访问，但本次搜索没有返回候选商品。空结果不等于采集失败。';
+      case 'PARTIAL_SUCCESS':
+        return `有效来源 ${this.successfulChannelCount()}/${this.channels().length} 个；采集到 ${result.resultCount} 个候选商品，其中匹配 ${result.matchedCount} 个、待确认 ${result.uncertainCount} 个。失败来源见下方渠道状态。`;
       case 'SUCCESS':
-        return `采集到 ${result.resultCount} 个候选商品，其中匹配 ${result.matchedCount} 个、待确认 ${result.uncertainCount} 个。`;
+        return `${this.channels().length} 个来源均采集成功；候选 ${result.resultCount} 个，其中匹配 ${result.matchedCount} 个、待确认 ${result.uncertainCount} 个。`;
       default:
         return '';
     }
@@ -77,9 +99,9 @@ export class PlatformPanelComponent {
   readonly bannerType = computed(() => {
     switch (this.result().status) {
       case 'FAILED':
-      case 'BLOCKED':
         return 'error';
       case 'NOT_CONFIGURED':
+      case 'PARTIAL_SUCCESS':
         return 'warning';
       case 'EMPTY':
         return 'info';
@@ -87,11 +109,12 @@ export class PlatformPanelComponent {
         return 'success';
     }
   });
-  readonly providerLabel = computed(() => {
-    const type = this.result().providerType;
-    if (type === 'official_api') return '官方 API';
-    if (type === 'browser') return '浏览器采集';
-    if (type === 'third_party') return '第三方数据服务';
-    return '未配置';
-  });
+
+  channelStatus(channel: ChannelResult) {
+    return TASK_STATUS_META[channel.status];
+  }
+
+  channelDuration(channel: ChannelResult): string {
+    return formatDuration(channel.durationMs);
+  }
 }

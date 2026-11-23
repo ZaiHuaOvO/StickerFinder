@@ -5,12 +5,14 @@ import {
   Index,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   OneToOne,
   PrimaryColumn,
 } from 'typeorm';
 import { PlatformEnum, SourceTypeEnum } from '../common/enums';
 import { PriceInfo, SkuOption } from '../common/interfaces/price.interface';
 import { ProductMatchResult } from './product-match-result.entity';
+import { ProductObservation } from './product-observation.entity';
 import { SearchRun } from './search-run.entity';
 
 @Entity({ name: 'product_candidates' })
@@ -68,4 +70,7 @@ export class ProductCandidate {
 
   @OneToOne(() => ProductMatchResult, (result) => result.candidate)
   matchResult?: ProductMatchResult;
+
+  @OneToMany(() => ProductObservation, (observation) => observation.candidate)
+  observations: ProductObservation[];
 }

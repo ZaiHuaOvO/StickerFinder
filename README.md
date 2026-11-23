@@ -1,12 +1,12 @@
 # StickerFinder
 
-造景贴纸跨平台商品检索 Demo（v0.1.0）。
+造景贴纸跨平台商品检索 Demo（v0.2.0）。
 
 输入一款造景贴纸的名称，系统会分别检索 **淘宝、抖音、小红书、拼多多**，把采集到的商品标准化，调用 **DeepSeek** 判断商品实际销售内容是否真的包含目标贴纸，展示单款、组合装、全系列等匹配结果及其现价，并支持人工复核。
 
 本项目的第一目标是 **验证数据真实性**，不是堆功能。未配置的平台、无法访问的页面、无法确认的商品都会被明确标记，不会用模拟商品或虚构价格填充。
 
-> 当前状态：项目初期版本。Phase 1（项目基础、搜索任务、统一数据结构、页面、平台状态）已在本地完成并验证；官方 API、DeepSeek、抖音/小红书真实页面采集需要配置凭证或登录后才能做真实验证。详见 [docs/verification.md](docs/verification.md)。
+> 当前状态：Phase 1 基础链路与 Phase 2 抖音/小红书双数据源已完成代码实现。抖音、小红书分别创建 **第三方 API + Playwright** 两个独立渠道任务，并保存多来源观察记录；Qovia/OKData 的真实结果需要配置 API Key 后验证。官方 API、DeepSeek 与登录采集同样需要凭证或登录后才能做真实验证。详见 [docs/verification.md](docs/verification.md)。
 
 ---
 
@@ -16,7 +16,14 @@
 - **四平台独立采集器**（Adapter 模式）：
   - 淘宝：`taobao.tbk.dg.material.optional`（淘宝客推广物料搜索）。
   - 拼多多：`pdd.ddk.goods.search`（多多进宝商品搜索）。
-  - 抖音 / 小红书：Playwright 可见浏览器 + 本地持久化登录状态，页面解析失败时返回明确原因。
+  - 抖音：**Qovia 第三方 API** + **Playwright 浏览器**，两个渠道独立任务、独立状态。
+  - 小红书：**OKData 第三方 API** + **Playwright 浏览器**，两个渠道独立任务、独立状态。
+- **多渠道任务与观察记录**：
+  - 同一平台可同时有多个渠道任务；某渠道失败不影响其他渠道。
+  - `ProductObservation` 保存每个来源的标题、价格、原价、地区说明与原始响应；同一候选商品可关联多个来源，价格不被覆盖。
+  - 商品去重：平台 ID / 规范化 URL / 标题+店铺强匹配；弱匹配调用 DeepSeek 判断是否同款（不判断价格）。
+- **平台状态**：`SUCCESS` / `PARTIAL_SUCCESS` / `EMPTY` / `FAILED` / `NOT_CONFIGURED`，并保留每个渠道的独立状态、错误与耗时。
+- **地区提示**：第三方数据服务的地区限制写入观察记录并在前端展示；无法确认中国大陆可购买性时明确标记，不当作正常可购买结果。
 - **平台状态接口**：未配置凭证 / 浏览器通道关闭时显示 `NOT_CONFIGURED`，不会发空凭证请求。
 - **统一商品结构**：标题、店铺、商品链接、图片、SKU、价格、来源、采集时间、原始数据。
 - **价格规则**：`TARGET_SKU` / `BUNDLE` / `FULL_SET` / `LOWEST_SKU` / `LISTING` / `UNKNOWN`；拼多多单买价与拼团价分开保存。
@@ -57,8 +64,8 @@ StickerFinder/
 │   │   ├── browser/               # Playwright 会话、登录态、串行锁、域名白名单
 │   │   ├── common/                # 枚举、统一商品/价格接口、错误、工具
 │   │   ├── database/              # TypeORM 配置与环境变量工具
-│   │   ├── entities/              # search_runs / platform_search_tasks / candidates / match_results
-│   │   ├── providers/             # 四平台独立 Adapter
+│   │   ├── entities/              # search_runs / platform_search_tasks / candidates / observations / match_results
+│   │   ├── providers/             # 淘宝/拼多多/抖音(Qovia+Playwright)/小红书(OKData+Playwright)
 │   │   ├── search/                # 搜索服务、编排器、控制器、DTO
 │   │   ├── uploads/               # 参考图上传
 │   │   ├── app.module.ts
@@ -72,8 +79,10 @@ StickerFinder/
 │       ├── core/                  # 模型、API 服务、标签映射
 │       └── app.ts / app.html / app.less
 ├── docs/
-│   ├── platform-integration.md    # 平台授权与采集说明
-│   └── verification.md            # 本地验证记录与未验证事项
+│   ├── platform-integration.md    # 平台授权与采集说明（含 Qovia / OKData）
+│   ├── verification.md            # 本地验证记录与未验证事项
+│   ├── phase2-delivery.md         # Phase 2 交付清单与测试矩阵
+│   └── migrations/                # MySQL 增量迁移 SQL
 ├── .env.example
 ├── .gitignore
 └── package.json                   # 根目录便捷脚本
@@ -201,6 +210,8 @@ npm run check:config -- --live
 
 - MySQL / SQLite 连接与表；
 - DeepSeek Key 与模型（优先 `/models`，必要时最小对话请求）；
+- Qovia 抖音商品搜索（签名/鉴权，测试关键词“贴纸”，约 $0.025/次）；
+- OKData 小红书商城搜索（鉴权，测试关键词“贴纸”，约 $0.02/次）；
 - 淘宝客物料搜索（签名 + 权限，测试关键词“贴纸”）；
 - 多多进宝商品搜索（签名 + 权限，测试关键词“贴纸”）；
 - Playwright Chromium 是否安装、抖音/小红书本地登录资料是否存在。
@@ -231,6 +242,12 @@ npm run check:config -- --live
 | `AI_MIN_CONFIDENCE` | 低于该置信度的 MATCH 会降级为 UNCERTAIN | `0.65` |
 | `AI_VISION_ENABLED` | 是否发送参考图/商品图（需模型支持图片输入） | `false` |
 | `IMAGE_HOST_ALLOWLIST` | 允许抓取图片的域名后缀，逗号分隔 | `alicdn.com,pddpic.com,...` |
+| `QOVIA_API_KEY` | Qovia 抖音商品搜索密钥；为空则该渠道未配置 | 空 |
+| `QOVIA_BASE_URL` | Qovia API 地址 | `https://api.qovia.ai` |
+| `OKDATA_API_KEY` | OKData 小红书商城搜索密钥；为空则该渠道未配置 | 空 |
+| `OKDATA_BASE_URL` | OKData API 地址 | `https://api.okdata.online` |
+| `THIRD_PARTY_MAX_AI_MATCHES_PER_PLATFORM` | 每平台最多用 DeepSeek 做几次跨来源同款判断 | `6` |
+| `BAMBOO_API_KEY` / `SOCIALTOAI_API_KEY` | 预留第三方服务（当前未实现） | 空 |
 | `TAOBAO_APP_KEY` / `TAOBAO_APP_SECRET` | 淘宝开放平台应用凭证 | 空 |
 | `TAOBAO_ADZONE_ID` | 淘宝客推广位 ID（该接口必需） | 空 |
 | `TAOBAO_GATEWAY_URL` | TOP 网关 | `https://eco.taobao.com/router/rest` |
@@ -246,9 +263,9 @@ npm run check:config -- --live
 | `PROVIDER_HTTP_TIMEOUT_MS` | 第三方 API 超时 | `20000` |
 | `UPLOAD_DIR` | 上传目录 | `uploads` |
 | `UPLOAD_MAX_IMAGE_MB` | 参考图片大小上限 | `5` |
-| `PRODUCT_DATA_API_KEY` / `PRODUCT_DATA_API_BASE_URL` | 预留第三方数据服务（当前未实现） | 空 |
+| `PRODUCT_DATA_API_KEY` / `PRODUCT_DATA_API_BASE_URL` | 历史预留字段（当前未实现） | 空 |
 
-凭证为空时，对应平台直接返回 `NOT_CONFIGURED`，不会使用空凭证请求接口。
+凭证为空时，对应渠道直接返回 `NOT_CONFIGURED`，不会使用空凭证请求接口。
 
 ---
 
@@ -257,18 +274,22 @@ npm run check:config -- --live
 | 表 | 作用 |
 |---|---|
 | `search_runs` | 每次搜索：目标名称、系列、别名、参考图、状态、起止时间 |
-| `platform_search_tasks` | 每个平台的任务：状态、数据来源、结果数、错误码/原因、备注 |
-| `product_candidates` | 真实采集到的候选商品：标题、店铺、链接、图片、SKU、价格、来源、原始数据、采集时间 |
+| `platform_search_tasks` | 每个**渠道**的任务：平台、provider、状态、结果数、错误码/原因、耗时 |
+| `product_candidates` | 去重后的实际候选商品：标题、店铺、链接、图片、SKU、主价格、来源、采集时间 |
+| `product_observations` | 某来源在某一时刻的商品观察：provider/source、标题、店铺、链接、图片、SKU、价格/原价/拼团价、地区说明、原始响应 |
 | `product_match_results` | AI 判断与人工判断：匹配状态/类型、置信度、摘要、证据、SKU 判断、AI 原始响应、人工决定与备注 |
 
-平台任务状态：
+渠道任务状态：
 
 - `PENDING` / `RUNNING`
-- `SUCCESS`：至少返回一个候选
-- `EMPTY`：平台可访问，但本次确实没有结果（不等于失败）
+- `SUCCESS`：该渠道至少返回一个候选
+- `PARTIAL_SUCCESS`：该渠道保存了部分候选，但存在商品级错误
+- `EMPTY`：渠道可访问，但本次确实没有结果（不等于失败）
 - `FAILED`：接口/页面解析/网络错误
 - `NOT_CONFIGURED`：缺少凭证或通道未启用
 - `BLOCKED`：登录、验证码、异常访问等，需要人工处理
+
+平台聚合状态：`SUCCESS` / `PARTIAL_SUCCESS` / `EMPTY` / `FAILED` / `NOT_CONFIGURED`。任一渠道有数据但其他渠道未配置/为空/失败时，平台为 `PARTIAL_SUCCESS`。
 
 AI 判断与人工判断分列保存；人工复核不会覆盖 AI 原始结果。
 
@@ -307,20 +328,68 @@ AI 判断与人工判断分列保存；人工复核不会覆盖 AI 原始结果�
 
 ```json
 {
-  "platform": "taobao",
-  "status": "SUCCESS",
-  "providerType": "official_api",
+  "platform": "douyin",
+  "status": "PARTIAL_SUCCESS",
   "resultCount": 2,
   "matchedCount": 1,
   "uncertainCount": 1,
   "excludedCount": 0,
-  "errorCode": null,
-  "errorMessage": null,
-  "note": "接口覆盖范围说明",
+  "note": "Qovia 为第三方数据服务……",
+  "channels": [
+    {
+      "provider": "qovia",
+      "providerLabel": "Qovia 第三方 API",
+      "source": "third_party_api",
+      "status": "SUCCESS",
+      "resultCount": 2,
+      "durationMs": 4210
+    },
+    {
+      "provider": "playwright",
+      "providerLabel": "Playwright 浏览器",
+      "source": "playwright",
+      "status": "BLOCKED",
+      "resultCount": 0,
+      "errorCode": "LOGIN_REQUIRED",
+      "errorMessage": "抖音搜索需要登录……"
+    }
+  ],
   "products": [],
   "uncertainProducts": []
 }
 ```
+
+每个商品会带 `observations` 数组，保存各来源的价格、原价、地区与原始响应：
+
+```json
+{
+  "id": "candidate-id",
+  "title": "A系列 B贴纸",
+  "price": { "amount": 9, "displayText": "¥9.00", "priceType": "LOWEST_SKU" },
+  "priceConflict": true,
+  "observations": [
+    {
+      "provider": "qovia",
+      "providerLabel": "Qovia 第三方 API",
+      "source": "third_party_api",
+      "price": { "amount": 9, "displayText": "¥9.00", "priceType": "LISTING" },
+      "observedAt": "2026-11-23T12:00:00+08:00",
+      "regionNote": "Qovia 未声明数据地区……",
+      "rawData": {}
+    },
+    {
+      "provider": "playwright",
+      "providerLabel": "Playwright 浏览器",
+      "source": "playwright",
+      "price": { "amount": 9.5, "displayText": "¥9.50", "priceType": "LISTING" },
+      "regionNote": "来自本机登录浏览器……",
+      "rawData": {}
+    }
+  ]
+}
+```
+
+`priceConflict=true` 表示两个来源价格不一致；前端会并列展示，不会自动选择其中一个作为真实价格。
 
 `products` 只包含最终匹配商品；`uncertainProducts` 单独放置待确认商品；不匹配商品保留在数据库中但不返回列表，只给出数量。人工复核会覆盖显示分组。
 
@@ -337,8 +406,17 @@ AI 判断与人工判断分列保存；人工复核不会覆盖 AI 原始结果�
   "ai": { "configured": false, "model": "deepseek-flash", "visionEnabled": false, "reason": "缺少 DEEPSEEK_API_KEY" },
   "platforms": {
     "taobao": { "platform": "taobao", "configured": false, "provider": null, "reason": "缺少配置：TAOBAO_APP_KEY、TAOBAO_APP_SECRET、TAOBAO_ADZONE_ID" },
-    "douyin": { "platform": "douyin", "configured": true, "provider": "browser", "reason": "..." },
-    "xiaohongshu": { "platform": "xiaohongshu", "configured": true, "provider": "browser", "reason": "..." },
+    "douyin": {
+      "platform": "douyin",
+      "configured": true,
+      "provider": "browser",
+      "reason": "1/2 个来源已配置",
+      "channels": [
+        { "key": "qovia", "label": "Qovia 第三方 API", "configured": false, "reason": "缺少配置：QOVIA_API_KEY" },
+        { "key": "playwright", "label": "Playwright 浏览器", "configured": true, "reason": "首次使用需要扫码登录" }
+      ]
+    },
+    "xiaohongshu": { "platform": "xiaohongshu", "configured": true, "provider": "browser", "reason": "1/2 个来源已配置", "channels": [] },
     "pinduoduo": { "platform": "pinduoduo", "configured": false, "provider": null, "reason": "缺少配置：PDD_CLIENT_ID、PDD_CLIENT_SECRET" }
   }
 }
@@ -370,6 +448,14 @@ AI 判断与人工判断分列保存；人工复核不会覆盖 AI 原始结果�
 
 平台授权、接口字段、价格口径与浏览器采集注意事项见 [docs/platform-integration.md](docs/platform-integration.md)。
 
+双数据源规则：
+
+- 抖音同时执行 Qovia 第三方 API 与 Playwright；小红书同时执行 OKData 第三方 API 与 Playwright。
+- 两个渠道独立执行、独立记录状态/错误/耗时，一个失败不会导致另一个不执行。
+- 同一商品可由多个来源观察到；`product_observations` 保存每个来源的价格与原始信息，候选商品只做去重关联。
+- 强匹配（平台 ID、规范化 URL、标题+店铺）直接合并；弱匹配在预算内调用 DeepSeek 判断是否同款。
+- 同款判断只判断商品身份，不判断哪个价格正确；不确定时不合并。
+
 AI 识别规则摘要：
 
 1. 判断的是“商品实际销售内容”，不是标题相似度。
@@ -389,25 +475,29 @@ AI 识别规则摘要：
 ## 9. 价格与数据真实性
 
 - 价格必须有 `priceSource` 与 `observedAt`；提取失败时 `amount = null`，展示“未获取”，绝不写 0。
+- 每个来源的价格保存在 `product_observations`；同一商品多个来源价格不一致时，前端并列展示并标记“价格不一致”，不自动选择真实价格。
+- OKData 原价、Qovia `price_text`（如“到手价”）与地区说明均保留在观察记录中。
 - 组合装展示整套价格，不拆分计算单张价格。
 - 拼多多默认展示单买价；拼团价单独保留并明确标注“需拼团”。
 - 淘宝客接口返回展示价，SKU 未确认时使用 `LISTING`。
 - `LOWEST_SKU` 必须注明起售价与 SKU 未确认。
 - 商品卡片链接来自平台返回或由平台商品 ID 生成的规范链接，不使用 AI 生成的 URL。
+- 第三方数据服务未确认中国大陆可购买性时，观察记录与前端都会显示地区限制说明。
 
 ---
 
 ## 10. 安全与合规
 
 - 不破解验证码、不绕过登录/风控、不轮换代理、不做无限重试。
-- 平台请求低频、顺序执行；每个平台独立失败，不互相阻塞。
+- 平台请求低频、顺序执行；同一平台的多个渠道独立失败，不互相阻塞。
 - Playwright 使用正常浏览器访问；遇到验证码/访问异常立即停止并提示人工处理。
 - 登录态、Cookie、密钥不进入 Git；`.env*`、`.auth/`、`storage-state*.json` 已忽略。
 - 图片抓取仅允许白名单域名，限制协议、大小与类型，防止 SSRF。
 - 浏览器采集限制在平台域名白名单内。
 - 上传文件校验 MIME、文件头、大小，文件名使用 UUID。
-- API 响应不返回原始 `rawData`；数据库保留必要原始信息用于排查。
-- 商品标题/描述/SKU 均视为不可信输入。
+- `ProductObservation.rawData` 在入库和返回前会递归脱敏（token/secret/cookie/authorization 等字段）并限制深度、数组长度与字符串长度；前端只允许用户主动展开查看。
+- Qovia/OKData 密钥只在后端环境变量中读取，不进入请求 URL 或前端。
+- 商品标题/描述/SKU 与第三方原始响应均视为不可信输入。
 - 当前开发模式 CORS 较宽松，部署到共享环境前应收紧来源并增加访问控制。
 
 ---
@@ -419,11 +509,14 @@ AI 识别规则摘要：
 - 前后端依赖安装与生产构建。
 - SQLite 模式建表、启动、搜索任务生命周期、轮询、状态区分。
 - 启动中断恢复：运行中的搜索在重启后被标记为 `INTERRUPTED`，没有伪装成功。
-- 未配置平台显示 `NOT_CONFIGURED`；Playwright 未安装时显示明确错误；安装后抖音页面解析失败时返回 `PARSE_FAILED` 原因。
+- 双数据源任务：抖音/小红书各创建 Qovia/OKData + Playwright 两个独立任务；未配置第三方 Key 时显示 `NOT_CONFIGURED`，Playwright 渠道独立执行。
+- 平台聚合：渠道成功/未配置/失败组合能正确得到 `PARTIAL_SUCCESS` / `FAILED` / `NOT_CONFIGURED`。
+- 渠道状态在前端逐条展示（来源、状态、结果数、耗时、错误）。
 - 参考图上传、静态访问、使用 `referenceImageId` 发起搜索；伪造图片内容会被拒绝。
 - 商品卡片、待确认区域、人工复核保存与重新分组（使用一次性本地测试数据验证渲染，验证后已清理）。
+- 多来源价格对比与原始采集信息界面（使用一次性本地测试数据验证渲染，验证后已清理）。
 - 桌面/窄屏布局。
-- 后端基础单元测试：`npm --prefix backend test`（URL 规范化、浏览器价格解析、AI JSON 解析、AI Schema 校验、AI 安全降级，共 26 项通过）。
+- 后端单元测试：`npm --prefix backend test`（37 项通过，含 Qovia/OKData 响应映射、去重、平台状态聚合、AI Schema 与安全降级、敏感字段脱敏）。
 
 运行后端测试：
 
@@ -435,11 +528,11 @@ npm --prefix backend test
 
 - MySQL 运行时（仅完成设计与 SQLite 对等验证）。
 - 淘宝 / 拼多多真实 API 返回与价格。
-- DeepSeek 真实调用、模型可用性与视觉输入。
+- Qovia / OKData 真实请求与返回（当前 `QOVIA_API_KEY`、`OKDATA_API_KEY` 为空；解析器使用官方示例响应做单元测试，不代表真实采集成功）。
+- DeepSeek 真实商品识别与同款判断（有 Key 但本次没有真实候选商品可验证）。
 - 抖音 / 小红书登录后的真实商品搜索与 SKU/价格解析。
-- 第三方数据服务（未实现）。
 
-详细记录见 [docs/verification.md](docs/verification.md)。
+详细记录见 [docs/verification.md](docs/verification.md) 与 [Phase 2 交付清单](docs/phase2-delivery.md)。
 
 ---
 
@@ -448,11 +541,11 @@ npm --prefix backend test
 | 阶段 | 状态 |
 |---|---|
 | Phase 1 项目基础 | 已完成：后端/前端/数据库实体/搜索任务/统一结构/页面/平台状态 |
-| Phase 2 官方 API 采集 | 代码完成（淘宝、拼多多），待真实凭证验证 |
-| Phase 3 Playwright 采集 | 登录态、页面搜索、失败分类完成；商品详情/SKU 深度解析待补 |
-| Phase 4 DeepSeek 识别 | 调用、Prompt、JSON 校验、SKU 判断、人工复核完成；待真实 API 验证 |
-| Phase 5 前端结果展示 | 已完成四平台 Tabs、卡片、待确认、失败状态、复核入口 |
-| Phase 6 真实性测试 | 待准备 10–20 款真实贴纸与平台凭证后执行 |
+| Phase 2 双数据源采集 | 代码完成：Qovia/OKData + Playwright 双渠道、观察记录、同款判断、来源对比；待真实 Key 验证 |
+| Phase 3 Playwright 登录与详情 | 登录态、页面搜索、失败分类完成；商品详情/SKU 深度解析待补 |
+| Phase 4 DeepSeek 识别 | 内容识别、同款判断、JSON 校验、SKU 判断、人工复核完成；待真实候选验证 |
+| Phase 5 前端结果展示 | 已完成四平台 Tabs、渠道状态、卡片、多来源价格对比、待确认、复核入口 |
+| Phase 6 真实性测试 | 待准备 3–5 款真实贴纸与平台凭证后执行 |
 
 ---
 
@@ -474,6 +567,12 @@ npm --prefix backend test
 **抖音/小红书显示“采集失败”或“需要登录”？**
 先运行 `npm run playwright:install`，再运行 `npm run browser:login -- douyin` / `-- xiaohongshu` 手动登录。页面结构变化会返回 `PARSE_FAILED`，不会编造商品。
 
+**为什么抖音/小红书只显示一个来源成功？**
+这两个平台要求同时执行第三方 API 与 Playwright。第三方 Key（`QOVIA_API_KEY` / `OKDATA_API_KEY`）未配置时，对应渠道显示 `NOT_CONFIGURED`，平台会聚合为 `PARTIAL_SUCCESS`（有数据）或 `FAILED`（无数据），不会用另一个渠道的结果冒充双来源成功。
+
+**Qovia / OKData 的价格能直接当作大陆价格吗？**
+不能。Qovia 文档未声明数据地区；OKData 文档说明小红书商品为海外 App 视角，促销可能与大陆不同。观察记录与前端都会保留地区提示，需人工核对。
+
 **AI 未配置时会怎样？**
 商品仍会采集并保存，但会进入“待确认”区域，状态为 `UNCERTAIN`，不会伪装成匹配。
 
@@ -491,9 +590,9 @@ Angular 21 需要 Node 22.12+；若升级到 Angular 22，需要 Node 22.22.3+�
 ## 15. 后续计划
 
 - 商品详情页 SKU / 价格提取（尤其抖音、小红书），提高 `TARGET_SKU` 比例。
-- 将 AI 缓存持久化，并支持按 Prompt/商品版本失效。
-- 持久化采集指标，按平台输出搜索覆盖率、误报率、价格准确率。
-- 可选第三方数据服务 Adapter。
+- 将 AI 与同款判断缓存持久化，并支持按 Prompt/商品版本失效。
+- 持久化采集指标，按平台/来源输出覆盖率、误报率、价格准确率。
+- Bamboo / SocialToAI 等可替换第三方 Adapter。
 - TypeORM 迁移替代 `synchronize`；生产环境访问控制与更严格 CORS。
-- 单元测试与端到端测试（签名、AI 校验、人工复核、状态机）。
+- 补充单元测试与端到端测试（签名、AI 校验、人工复核、状态机）。
 - 基于真实测试结果决定是否继续投入，以及各平台可达到的能力边界。

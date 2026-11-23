@@ -18,7 +18,11 @@
 
   <div class="product-card__body">
     <div class="meta-line">
-      <span class="source-label">{{ sourceLabel() }}</span>
+      <div class="source-tags">
+        @for (label of sourceTags(); track label) {
+          <nz-tag>{{ label }}</nz-tag>
+        }
+      </div>
       @if (manualLabel(); as label) {
         <nz-tag nzColor="gold">{{ label }}</nz-tag>
       }
@@ -60,22 +64,81 @@
       </div>
     }
 
-    <div class="price-block">
-      <div class="price-main">
-        <span class="price-value">{{ priceText() }}</span>
-        <span class="price-type">{{ priceTypeLabel() }}</span>
-        @if (priceNote()) {
-          <span class="price-info" nz-tooltip [nzTooltipTitle]="priceNote()" nz-icon nzType="info-circle"></span>
+    @if (hasMultipleSources()) {
+      <div class="source-compare">
+        <div class="source-compare__head">
+          <strong>来源价格对比</strong>
+          @if (priceConflict()) {
+            <nz-tag nzColor="volcano">价格不一致</nz-tag>
+          } @else {
+            <nz-tag nzColor="green">来源价格一致</nz-tag>
+          }
+        </div>
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th>来源</th>
+              <th>价格</th>
+              <th>采集时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of comparisonRows(); track row.observation.id) {
+              <tr>
+                <td>
+                  <strong>{{ row.providerLabel }}</strong>
+                  <span class="compare-source">{{ row.sourceLabel }}</span>
+                </td>
+                <td>
+                  <span class="compare-price">{{ row.priceText }}</span>
+                  <span class="compare-type">{{ row.priceTypeLabel }}</span>
+                  @if (row.originalText) {
+                    <span class="compare-original">原价 {{ row.originalText }}</span>
+                  }
+                  @if (row.note) {
+                    <span class="compare-source">{{ row.note }}</span>
+                  }
+                </td>
+                <td>{{ row.observedAt }}</td>
+              </tr>
+              @if (row.regionNote) {
+                <tr class="compare-note-row">
+                  <td colspan="3">{{ row.regionNote }}</td>
+                </tr>
+              }
+            }
+          </tbody>
+        </table>
+        @if (priceConflict()) {
+          <div class="price-conflict">
+            两个来源价格不一致，系统未自动选择任何一个作为真实价格，请打开商品页核对。
+          </div>
         }
       </div>
-      @if (groupPrice(); as group) {
-        <div class="group-price">{{ group.displayText }}</div>
-      }
-      <div class="price-source">来源：{{ product().price?.priceSource || '未提供价格来源' }}</div>
-      @if (priceObservedAt(); as observedAt) {
-        <div class="price-source">价格时间：{{ observedAt }}</div>
-      }
-    </div>
+    } @else {
+      <div class="price-block">
+        <div class="price-main">
+          <span class="price-value">{{ priceText() }}</span>
+          <span class="price-type">{{ priceTypeLabel() }}</span>
+          @if (priceNote()) {
+            <span class="price-info" nz-tooltip [nzTooltipTitle]="priceNote()" nz-icon nzType="info-circle"></span>
+          }
+        </div>
+        @if (originalPriceText(); as original) {
+          <div class="original-price">原价 {{ original }}</div>
+        }
+        @if (groupPrice(); as group) {
+          <div class="group-price">{{ group.displayText }}</div>
+        }
+        <div class="price-source">来源：{{ product().price?.priceSource || '未提供价格来源' }}</div>
+        @if (priceObservedAt(); as observedAt) {
+          <div class="price-source">价格时间：{{ observedAt }}</div>
+        }
+        @if (primaryRegionNote(); as regionNote) {
+          <div class="region-note">{{ regionNote }}</div>
+        }
+      </div>
+    }
 
     @if (aiWarning(); as warning) {
       <div class="ai-warning">{{ warning }}</div>
@@ -106,6 +169,34 @@
         }
       </div>
     </details>
+
+    @if (observations().length) {
+      <div class="raw-observations">
+        @for (observation of observations(); track observation.id) {
+          <details class="raw-box">
+            <summary>{{ observation.providerLabel }} · 原始采集信息</summary>
+            <div class="raw-meta">
+              <span>来源商品 ID：{{ observation.sourceProductId || '—' }}</span>
+              <span>来源类型：{{ observation.sourceLabel }}</span>
+              <span>采集时间：{{ time(observation.observedAt) }}</span>
+              @if (observation.salesText) {
+                <span>{{ observation.salesText }}</span>
+              }
+              @if (observation.rating !== null) {
+                <span>评分：{{ observation.rating }}</span>
+              }
+              @if (observation.matchReason) {
+                <span>合并依据：{{ observation.matchReason }}</span>
+              }
+            </div>
+            @if (observation.regionNote) {
+              <p class="raw-region">{{ observation.regionNote }}</p>
+            }
+            <pre class="raw-json">{{ rawJson(observation.rawData) }}</pre>
+          </details>
+        }
+      </div>
+    }
 
     <div class="card-actions">
       <a

@@ -1,6 +1,6 @@
 {
   "name": "stickerfinder",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "StickerFinder：造景贴纸跨平台商品检索 Demo",
   "scripts": {

@@ -9,6 +9,7 @@ import {
 import { SearchRunStatusEnum } from '../common/enums';
 import { PlatformSearchTask } from './platform-search-task.entity';
 import { ProductCandidate } from './product-candidate.entity';
+import { ProductObservation } from './product-observation.entity';
 
 @Entity({ name: 'search_runs' })
 export class SearchRun {
@@ -44,4 +45,7 @@ export class SearchRun {
 
   @OneToMany(() => ProductCandidate, (candidate) => candidate.searchRun)
   candidates: ProductCandidate[];
+
+  @OneToMany(() => ProductObservation, (observation) => observation.searchRun)
+  observations: ProductObservation[];
 }

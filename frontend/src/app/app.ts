@@ -53,11 +53,26 @@ export class App implements OnInit, OnDestroy {
 
   readonly aiStatus = computed(() => this.statuses()?.ai ?? null);
   readonly providerChips = computed(() =>
-    PLATFORM_ORDER.map((platform) => ({
-      platform,
-      meta: PLATFORM_META[platform],
-      status: this.statuses()?.platforms?.[platform] ?? null,
-    })),
+    PLATFORM_ORDER.map((platform) => {
+      const status = this.statuses()?.platforms?.[platform] ?? null;
+      const channelSummary =
+        status?.channels && status.channels.length > 0
+          ? status.channels
+              .map(
+                (channel) =>
+                  `${channel.label}：${
+                    channel.configured ? '已配置' : (channel.reason ?? '未配置')
+                  }`,
+              )
+              .join('\n')
+          : (status?.reason ?? '状态加载中');
+      return {
+        platform,
+        meta: PLATFORM_META[platform],
+        status,
+        tooltip: channelSummary,
+      };
+    }),
   );
   readonly totalMatched = computed(() =>
     (this.detail()?.platforms ?? []).reduce((sum, item) => sum + item.matchedCount, 0),

@@ -5,9 +5,11 @@ import {
   PlatformSearchTask,
   ProductCandidate,
   ProductMatchResult,
+  ProductObservation,
   SearchRun,
 } from '../entities';
 import { ProvidersModule } from '../providers/providers.module';
+import { CandidateAggregationService } from './candidate-aggregation.service';
 import { SearchController } from './search.controller';
 import { SearchOrchestratorService } from './search-orchestrator.service';
 import { SearchService } from './search.service';
@@ -18,12 +20,13 @@ import { SearchService } from './search.service';
       SearchRun,
       PlatformSearchTask,
       ProductCandidate,
+      ProductObservation,
       ProductMatchResult,
     ]),
     ProvidersModule,
     AiModule,
   ],
   controllers: [SearchController],
-  providers: [SearchService, SearchOrchestratorService],
+  providers: [SearchService, SearchOrchestratorService, CandidateAggregationService],
 })
 export class SearchModule {}

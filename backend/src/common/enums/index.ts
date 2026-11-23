@@ -18,6 +18,24 @@ export enum SourceTypeEnum {
   THIRD_PARTY = 'third_party',
 }
 
+/** 统一商品观察来源，用于 ProductObservation */
+export enum ObservationSourceEnum {
+  OFFICIAL_API = 'official_api',
+  THIRD_PARTY_API = 'third_party_api',
+  PLAYWRIGHT = 'playwright',
+}
+
+/** 具体数据服务/采集器标识 */
+export enum ProviderKeyEnum {
+  TAOBAO_TBK = 'taobao_tbk',
+  PDD_DDK = 'pdd_ddk',
+  QOVIA = 'qovia',
+  BAMBOO = 'bamboo',
+  OKDATA = 'okdata',
+  SOCIALTOAI = 'socialtoai',
+  PLAYWRIGHT = 'playwright',
+}
+
 export enum PriceTypeEnum {
   TARGET_SKU = 'TARGET_SKU',
   BUNDLE = 'BUNDLE',
@@ -39,10 +57,22 @@ export enum PlatformTaskStatusEnum {
   PENDING = 'PENDING',
   RUNNING = 'RUNNING',
   SUCCESS = 'SUCCESS',
+  PARTIAL_SUCCESS = 'PARTIAL_SUCCESS',
   EMPTY = 'EMPTY',
   FAILED = 'FAILED',
   NOT_CONFIGURED = 'NOT_CONFIGURED',
   BLOCKED = 'BLOCKED',
+}
+
+/** 平台级聚合状态（由该平台下多个渠道任务得出） */
+export enum PlatformStatusEnum {
+  PENDING = 'PENDING',
+  RUNNING = 'RUNNING',
+  SUCCESS = 'SUCCESS',
+  PARTIAL_SUCCESS = 'PARTIAL_SUCCESS',
+  EMPTY = 'EMPTY',
+  FAILED = 'FAILED',
+  NOT_CONFIGURED = 'NOT_CONFIGURED',
 }
 
 export enum MatchStatusEnum {

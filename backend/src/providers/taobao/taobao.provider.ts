@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { NotConfiguredError } from '../../common/errors/provider.errors';
-import { PlatformEnum, SourceTypeEnum } from '../../common/enums';
+import {
+  ObservationSourceEnum,
+  PlatformEnum,
+  ProviderKeyEnum,
+  SourceTypeEnum,
+} from '../../common/enums';
 import {
   PlatformProvider,
   ProviderSearchResult,
@@ -12,7 +17,9 @@ import { TaobaoApiClient } from './taobao.api';
 @Injectable()
 export class TaobaoProvider implements PlatformProvider {
   readonly platform = PlatformEnum.TAOBAO;
+  readonly key = ProviderKeyEnum.TAOBAO_TBK;
   readonly providerType = SourceTypeEnum.OFFICIAL_API;
+  readonly source = ObservationSourceEnum.OFFICIAL_API;
 
   constructor(private readonly api: TaobaoApiClient) {}
 

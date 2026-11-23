@@ -64,6 +64,42 @@ export class ProductCardComponent {
     return type ? MATCH_TYPE_META[type] : null;
   });
   readonly sourceLabel = computed(() => SOURCE_TYPE_META[this.product().sourceType]);
+  readonly observations = computed(() => this.product().observations ?? []);
+  readonly sourceTags = computed(() => {
+    const labels = this.observations()
+      .map((observation) => observation.providerLabel)
+      .filter(Boolean);
+    if (labels.length === 0) return [this.sourceLabel()];
+    return [...new Set(labels)];
+  });
+  readonly hasMultipleSources = computed(() => this.observations().length > 1);
+  readonly priceConflict = computed(() => Boolean(this.product().priceConflict));
+  readonly primaryObservation = computed(() => this.observations()[0] ?? null);
+  readonly comparisonRows = computed(() =>
+    this.observations().map((observation) => ({
+      observation,
+      priceText: observation.price?.displayText ?? '未获取',
+      priceTypeLabel: observation.price
+        ? PRICE_TYPE_META[observation.price.priceType]
+        : '价格未获取',
+      originalText: observation.originalPrice?.displayText ?? null,
+      observedAt: formatDateTime(observation.observedAt),
+      providerLabel: observation.providerLabel,
+      sourceLabel: observation.sourceLabel,
+      regionNote: observation.regionNote,
+      note: observation.price?.note ?? '',
+    })),
+  );
+  readonly primaryRegionNote = computed(
+    () => this.primaryObservation()?.regionNote ?? null,
+  );
+  readonly originalPriceText = computed(() => {
+    const original =
+      this.product().price?.originalDisplayText ??
+      this.primaryObservation()?.originalPrice?.displayText ??
+      null;
+    return original;
+  });
   readonly priceText = computed(() => this.product().price?.displayText ?? '未获取');
   readonly priceTypeLabel = computed(() => {
     const price = this.product().price;
@@ -101,6 +137,20 @@ export class ProductCardComponent {
     return keyed.filter((entry) => matchedIds.includes(entry.key));
   });
   readonly openUrl = computed(() => this.product().productUrl);
+
+  rawJson(value: Record<string, unknown> | null): string {
+    if (!value) return '无原始数据';
+    try {
+      const text = JSON.stringify(value, null, 2);
+      return text.length > 12000 ? `${text.slice(0, 12000)}\n…（已截断）` : text;
+    } catch {
+      return '原始数据无法序列化';
+    }
+  }
+
+  time(value: string | null | undefined): string {
+    return formatDateTime(value);
+  }
 
   openReview(): void {
     const product = this.product();

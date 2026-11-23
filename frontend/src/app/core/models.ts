@@ -6,10 +6,20 @@ export type TaskStatus =
   | 'PENDING'
   | 'RUNNING'
   | 'SUCCESS'
+  | 'PARTIAL_SUCCESS'
   | 'EMPTY'
   | 'FAILED'
   | 'NOT_CONFIGURED'
   | 'BLOCKED';
+
+export type PlatformStatus =
+  | 'PENDING'
+  | 'RUNNING'
+  | 'SUCCESS'
+  | 'PARTIAL_SUCCESS'
+  | 'EMPTY'
+  | 'FAILED'
+  | 'NOT_CONFIGURED';
 
 export type SearchRunStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'INTERRUPTED';
 
@@ -34,6 +44,7 @@ export type PriceType =
 export type AiStatus = 'OK' | 'FAILED' | 'SKIPPED';
 export type ManualDecision = 'PENDING' | 'MATCH' | 'NO_MATCH';
 export type SourceType = 'official_api' | 'browser' | 'third_party';
+export type ObservationSource = 'official_api' | 'third_party_api' | 'playwright';
 
 export interface PriceInfo {
   amount: number | null;
@@ -43,6 +54,8 @@ export interface PriceInfo {
   priceSource: string;
   observedAt: string;
   shippingIncluded: string;
+  originalAmount?: number | null;
+  originalDisplayText?: string | null;
   note?: string;
   groupPrice?: PriceInfo | null;
 }
@@ -79,6 +92,30 @@ export interface ProductMatch {
   aiError: string | null;
 }
 
+export interface ProductObservation {
+  id: string;
+  provider: string;
+  providerLabel: string;
+  source: ObservationSource;
+  sourceLabel: string;
+  sourceProductId: string | null;
+  title: string;
+  shopName: string | null;
+  productUrl: string;
+  imageUrls: string[];
+  price: PriceInfo | null;
+  originalPrice: PriceInfo | null;
+  groupPrice: PriceInfo | null;
+  salesText: string | null;
+  rating: number | null;
+  region: string | null;
+  regionNote: string | null;
+  matchReason: string | null;
+  observedAt: string;
+  collectedAt: string;
+  rawData: Record<string, unknown> | null;
+}
+
 export interface Product {
   id: string;
   platform: Platform;
@@ -95,11 +132,30 @@ export interface Product {
   collectedAt: string;
   effectiveMatchStatus: MatchStatus;
   match: ProductMatch | null;
+  observations: ProductObservation[];
+  priceConflict: boolean;
+}
+
+export interface ChannelResult {
+  taskId: string;
+  provider: string;
+  providerLabel: string;
+  source: ObservationSource;
+  sourceLabel: string;
+  providerType: SourceType | null;
+  status: TaskStatus;
+  resultCount: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+  note: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  durationMs: number | null;
 }
 
 export interface PlatformResult {
   platform: Platform;
-  status: TaskStatus;
+  status: PlatformStatus;
   providerType: SourceType | null;
   resultCount: number;
   matchedCount: number;
@@ -110,6 +166,7 @@ export interface PlatformResult {
   note: string | null;
   startedAt: string | null;
   completedAt: string | null;
+  channels: ChannelResult[];
   products: Product[];
   uncertainProducts: Product[];
 }
@@ -127,11 +184,21 @@ export interface SearchDetail {
   platforms: PlatformResult[];
 }
 
+export interface ProviderChannelStatusInfo {
+  key: string;
+  label: string;
+  configured: boolean;
+  providerType: SourceType;
+  source: ObservationSource;
+  reason?: string;
+}
+
 export interface ProviderStatusInfo {
   platform: Platform;
   configured: boolean;
   provider: SourceType | null;
   reason?: string;
+  channels?: ProviderChannelStatusInfo[];
 }
 
 export interface AiStatusInfo {

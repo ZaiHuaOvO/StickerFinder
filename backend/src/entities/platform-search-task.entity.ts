@@ -5,13 +5,20 @@ import {
   Index,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryColumn,
 } from 'typeorm';
-import { PlatformEnum, PlatformTaskStatusEnum, SourceTypeEnum } from '../common/enums';
+import {
+  PlatformEnum,
+  PlatformTaskStatusEnum,
+  ProviderKeyEnum,
+  SourceTypeEnum,
+} from '../common/enums';
+import { ProductObservation } from './product-observation.entity';
 import { SearchRun } from './search-run.entity';
 
 @Entity({ name: 'platform_search_tasks' })
-@Index(['searchRunId', 'platform'], { unique: true })
+@Index(['searchRunId', 'platform', 'provider'], { unique: true })
 export class PlatformSearchTask {
   @PrimaryColumn({ type: 'varchar', length: 36 })
   id: string = randomUUID();
@@ -21,6 +28,9 @@ export class PlatformSearchTask {
 
   @Column({ type: 'varchar', length: 32 })
   platform: PlatformEnum;
+
+  @Column({ type: 'varchar', length: 32, default: 'legacy' })
+  provider: ProviderKeyEnum | string = 'legacy';
 
   @Column({ name: 'provider_type', type: 'varchar', length: 32, nullable: true })
   providerType: SourceTypeEnum | null = null;
@@ -49,4 +59,7 @@ export class PlatformSearchTask {
   @ManyToOne(() => SearchRun, (run) => run.platformTasks, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'search_run_id' })
   searchRun: SearchRun;
+
+  @OneToMany(() => ProductObservation, (observation) => observation.providerTask)
+  observations: ProductObservation[];
 }

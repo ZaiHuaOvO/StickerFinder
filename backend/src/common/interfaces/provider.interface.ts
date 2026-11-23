@@ -1,4 +1,9 @@
-import { PlatformEnum, SourceTypeEnum } from '../enums';
+import {
+  ObservationSourceEnum,
+  PlatformEnum,
+  ProviderKeyEnum,
+  SourceTypeEnum,
+} from '../enums';
 import { NormalizedProduct } from './normalized-product.interface';
 
 export interface SearchOptions {
@@ -14,16 +19,28 @@ export interface ProviderSearchResult {
   warnings?: string[];
 }
 
+export interface ProviderChannelStatus {
+  key: ProviderKeyEnum;
+  label: string;
+  configured: boolean;
+  providerType: SourceTypeEnum;
+  source: ObservationSourceEnum;
+  reason?: string;
+}
+
 export interface ProviderStatus {
   platform: PlatformEnum;
   configured: boolean;
   provider: SourceTypeEnum | null;
   reason?: string;
+  channels?: ProviderChannelStatus[];
 }
 
 export interface PlatformProvider {
   readonly platform: PlatformEnum;
+  readonly key: ProviderKeyEnum;
   readonly providerType: SourceTypeEnum;
+  readonly source: ObservationSourceEnum;
 
   isConfigured(): boolean;
 

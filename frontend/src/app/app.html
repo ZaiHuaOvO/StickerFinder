@@ -30,7 +30,7 @@
           class="status-pill"
           [class.ok]="chip.status?.configured ?? false"
           nz-tooltip
-          [nzTooltipTitle]="chip.status?.reason ?? '状态加载中'"
+          [nzTooltipTitle]="chip.tooltip"
         >
           <span class="status-dot"></span>{{ chip.meta.label }}
         </span>
@@ -200,7 +200,7 @@
   </main>
 
   <footer class="footer">
-    <span>StickerFinder v0.1.0 · 内部验证工具</span>
+    <span>StickerFinder v0.2.0 · 内部验证工具</span>
     <span>所有价格附来源与采集时间；未获取的数据不会用虚假值填充。</span>
   </footer>
 </div>
