@@ -1,0 +1,126 @@
+<article class="product-card" [class]="'tone-' + platform().tone">
+  <div class="product-card__media">
+    @if (imageUrl() && !imageBroken()) {
+      <img [src]="imageUrl()!" [alt]="title()" loading="lazy" (error)="imageBroken.set(true)" />
+    } @else {
+      <div class="media-fallback">
+        <span nz-icon nzType="picture"></span>
+        <span>无商品图片</span>
+      </div>
+    }
+    <div class="media-badges">
+      <span class="platform-badge">{{ platform().label }}</span>
+      @if (matchTypeInfo(); as info) {
+        <span class="type-badge">{{ info.label }}</span>
+      }
+    </div>
+  </div>
+
+  <div class="product-card__body">
+    <div class="meta-line">
+      <span class="source-label">{{ sourceLabel() }}</span>
+      @if (manualLabel(); as label) {
+        <nz-tag nzColor="gold">{{ label }}</nz-tag>
+      }
+      @if (product().match?.needsManualReview && !manualLabel()) {
+        <nz-tag nzColor="volcano">需人工确认</nz-tag>
+      }
+    </div>
+
+    <h3 class="product-title">
+      <a [href]="openUrl()" target="_blank" rel="noopener noreferrer">{{ title() }}</a>
+    </h3>
+
+    <div class="shop-line">店铺：{{ product().shopName || '未获取' }}</div>
+
+    <p class="content-summary">{{ summary() }}</p>
+
+    @if (product().match?.matchedContents?.length) {
+      <div class="content-tags">
+        @for (content of product().match!.matchedContents; track content) {
+          <nz-tag>{{ content }}</nz-tag>
+        }
+      </div>
+    }
+
+    @if (matchedSkuViews().length) {
+      <div class="sku-list">
+        <span class="sku-label">符合的 SKU</span>
+        @for (entry of matchedSkuViews(); track entry.key) {
+          <div class="sku-row">
+            <span class="sku-name">{{ entry.sku.name }}</span>
+            @if (entry.sku.price !== undefined) {
+              <span class="sku-price">¥{{ entry.sku.price.toFixed(2) }}</span>
+            }
+            @if (entry.decision?.reason) {
+              <span class="sku-reason">{{ entry.decision!.reason }}</span>
+            }
+          </div>
+        }
+      </div>
+    }
+
+    <div class="price-block">
+      <div class="price-main">
+        <span class="price-value">{{ priceText() }}</span>
+        <span class="price-type">{{ priceTypeLabel() }}</span>
+        @if (priceNote()) {
+          <span class="price-info" nz-tooltip [nzTooltipTitle]="priceNote()" nz-icon nzType="info-circle"></span>
+        }
+      </div>
+      @if (groupPrice(); as group) {
+        <div class="group-price">{{ group.displayText }}</div>
+      }
+      <div class="price-source">来源：{{ product().price?.priceSource || '未提供价格来源' }}</div>
+      @if (priceObservedAt(); as observedAt) {
+        <div class="price-source">价格时间：{{ observedAt }}</div>
+      }
+    </div>
+
+    @if (aiWarning(); as warning) {
+      <div class="ai-warning">{{ warning }}</div>
+    }
+
+    <details class="reason-box">
+      <summary>
+        <span>判断依据</span>
+        <span class="confidence">AI 置信度 {{ confidence() }}</span>
+      </summary>
+      @if (product().match?.reason) {
+        <p class="reason-text">{{ product().match!.reason }}</p>
+      }
+      @if (manualNote(); as note) {
+        <p class="manual-note">人工备注：{{ note }}</p>
+      }
+      @if (product().match?.evidence?.length) {
+        <ul class="evidence-list">
+          @for (evidence of product().match!.evidence; track evidence) {
+            <li>{{ evidence }}</li>
+          }
+        </ul>
+      }
+      <div class="collect-meta">
+        <span>采集时间：{{ collectedAt() }}</span>
+        @if (product().match?.aiModel) {
+          <span>识别模型：{{ product().match!.aiModel }}</span>
+        }
+      </div>
+    </details>
+
+    <div class="card-actions">
+      <a
+        nz-button
+        nzType="primary"
+        nzSize="small"
+        [href]="openUrl()"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        查看商品
+      </a>
+      <button nz-button nzSize="small" type="button" [nzLoading]="reviewing()" (click)="openReview()">
+        核对结果
+      </button>
+    </div>
+  </div>
+</article>

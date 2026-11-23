@@ -1,0 +1,115 @@
+<section class="search-card">
+  <div class="search-card__intro">
+    <span class="eyebrow">SEARCH A STICKER</span>
+    <h2>想找哪一款造景贴纸？</h2>
+    <p>输入具体到系列、款式的名称。系统会分别访问四个平台，把真实商品交给 AI 判断是否真的包含目标贴纸。</p>
+  </div>
+
+  <form nz-form nzLayout="vertical" [formGroup]="form" (ngSubmit)="submit()" class="search-form">
+    <div class="field-row">
+      <nz-form-item class="field-main">
+        <nz-form-label nzRequired nzFor="targetName">目标贴纸名称</nz-form-label>
+        <nz-form-control nzErrorTip="请输入目标贴纸名称">
+          <nz-input-group [nzPrefix]="namePrefix" nzSize="large">
+            <input
+              id="targetName"
+              nz-input
+              formControlName="targetName"
+              placeholder="例如：A系列 B贴纸"
+              maxlength="200"
+              autocomplete="off"
+            />
+          </nz-input-group>
+          <ng-template #namePrefix>
+            <span nz-icon nzType="search" class="input-icon"></span>
+          </ng-template>
+        </nz-form-control>
+      </nz-form-item>
+
+      <nz-form-item class="field-side">
+        <nz-form-label nzFor="seriesName">系列名称（可选）</nz-form-label>
+        <nz-form-control nzErrorTip="系列名称过长">
+          <input
+            id="seriesName"
+            nz-input
+            nzSize="large"
+            formControlName="seriesName"
+            placeholder="例如：A系列"
+            maxlength="200"
+            autocomplete="off"
+          />
+        </nz-form-control>
+      </nz-form-item>
+    </div>
+
+    <nz-form-item>
+      <nz-form-label nzFor="aliases">其他名称 / 别名（可选）</nz-form-label>
+      <nz-form-control>
+        <input
+          id="aliases"
+          nz-input
+          formControlName="aliases"
+          placeholder="不同平台的叫法，用逗号分隔，例如：A系B款, B款贴纸"
+          maxlength="2000"
+          autocomplete="off"
+        />
+      </nz-form-control>
+    </nz-form-item>
+
+    <div class="image-row">
+      <div class="image-copy">
+        <span class="image-title">参考图片（可选）</span>
+        <span class="image-hint">{{ imageHint() }}</span>
+      </div>
+
+      <div class="image-actions">
+        @if (previewUrl(); as preview) {
+          <div class="preview">
+            <img [src]="preview" alt="参考图片预览" />
+            <div class="preview__meta">
+              <span class="preview__name">{{ image()?.name }}</span>
+              <nz-tag nzColor="green">已上传</nz-tag>
+            </div>
+            <button nz-button nzType="text" nzSize="small" type="button" (click)="removeImage()">
+              移除
+            </button>
+          </div>
+        } @else {
+          <label class="upload-button" [class.upload-button--busy]="uploading()">
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              (change)="onFileSelected($event)"
+              [disabled]="uploading() || busy"
+            />
+            <span nz-icon [nzType]="uploading() ? 'loading' : 'upload'"></span>
+            {{ uploading() ? '上传中…' : '选择图片' }}
+          </label>
+        }
+      </div>
+    </div>
+
+    @if (uploadError()) {
+      <nz-alert nzType="error" nzShowIcon [nzMessage]="uploadError()!" class="form-alert" />
+    }
+    @if (formError(); as formError) {
+      <nz-alert nzType="error" nzShowIcon [nzMessage]="formError" class="form-alert" />
+    }
+
+    <div class="submit-row">
+      <span class="submit-note">{{ imageHint() }}</span>
+      <button
+        nz-button
+        nzType="primary"
+        nzSize="large"
+        type="submit"
+        [nzLoading]="busy"
+        [disabled]="uploading()"
+        class="submit-button"
+      >
+        <span nz-icon nzType="search"></span>
+        开始检索
+      </button>
+    </div>
+  </form>
+</section>

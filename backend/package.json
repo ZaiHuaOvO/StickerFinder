@@ -1,0 +1,47 @@
+{
+  "name": "stickerfinder-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "StickerFinder 后端：跨平台造景贴纸商品检索 Demo",
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:prod": "node dist/main.js",
+    "test": "node --test -r ts-node/register test/core.test.ts test/classifier.test.ts",
+    "db:create": "node scripts/create-database.js",
+    "check:config": "node scripts/check-config.js",
+    "browser:login": "node scripts/browser-login.js",
+    "playwright:install": "playwright install chromium"
+  },
+  "dependencies": {
+    "@nestjs/common": "^12.0.0",
+    "@nestjs/config": "^12.0.0",
+    "@nestjs/core": "^12.0.0",
+    "@nestjs/platform-express": "^12.0.0",
+    "@nestjs/typeorm": "^12.0.0",
+    "axios": "^1.7.9",
+    "better-sqlite3": "^12.11.1",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
+    "dotenv": "^16.4.7",
+    "mysql2": "^3.11.0",
+    "playwright": "^1.50.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "typeorm": "^0.3.20",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^12.0.0",
+    "@types/express": "^5.0.0",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^22.10.0",
+    "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.9.0"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true
+  }
+}

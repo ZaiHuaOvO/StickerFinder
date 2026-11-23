@@ -1,0 +1,40 @@
+# 环境变量与密钥
+.env
+.env.*
+!.env.example
+
+# Playwright 登录状态 / Cookie，绝不能提交
+playwright/.auth/
+.auth/
+storage-state*.json
+
+# 上传文件与日志
+uploads/
+logs/
+*.log
+
+# 依赖与构建产物
+node_modules/
+dist/
+build/
+coverage/
+.angular/
+*.tsbuildinfo
+
+# 本地数据库文件
+data/
+*.sqlite
+*.sqlite3
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/
+
+# 其他可能的本地密钥
+.npmrc
+*.pem
+*.key
+*.p12

@@ -1,0 +1,114 @@
+<div class="platform-panel" [class]="'tone-' + platform().tone">
+  <div class="panel-head">
+    <div class="panel-title">
+      <span class="platform-dot"></span>
+      <h3>{{ platform().label }}</h3>
+      <nz-tag [nzColor]="statusMeta().tone">{{ statusMeta().label }}</nz-tag>
+    </div>
+    <div class="panel-meta">
+      <span>{{ providerLabel() }}</span>
+      @if (result().resultCount > 0) {
+        <span>候选 {{ result().resultCount }}</span>
+      }
+    </div>
+  </div>
+
+  @if (isWorking()) {
+    <div class="working">
+      <nz-spin nzSimple nzSize="large"></nz-spin>
+      <div>
+        <strong>{{ bannerTitle() }}</strong>
+        <p>{{ bannerDescription() }}</p>
+      </div>
+    </div>
+  } @else {
+    <nz-alert
+      class="banner"
+      nzShowIcon
+      [nzType]="bannerType()"
+      [nzMessage]="bannerTitle()"
+      [nzDescription]="bannerDescription()"
+    />
+  }
+
+  @if (result().note) {
+    <div class="note-line">
+      <span nz-icon nzType="info-circle"></span>
+      <span>{{ result().note }}</span>
+    </div>
+  }
+
+  @if (
+    result().status !== 'SUCCESS' &&
+    result().status !== 'EMPTY' &&
+    (result().products.length > 0 || result().uncertainProducts.length > 0)
+  ) {
+    <div class="note-line">
+      <span nz-icon nzType="warning"></span>
+      <span>该平台最终状态为「{{ statusMeta().label }}」，以下为失败或中断前已采集并识别的部分商品。</span>
+    </div>
+  }
+
+  @if (
+    result().status === 'SUCCESS' ||
+    result().products.length > 0 ||
+    result().uncertainProducts.length > 0
+  ) {
+    @if (result().status === 'SUCCESS' && result().products.length === 0) {
+      <div class="no-match">
+        <span nz-icon nzType="inbox"></span>
+        @if (result().uncertainCount > 0) {
+          没有商品通过 AI 确认。请查看下方待确认区域，并打开商品页面人工核对。
+        } @else {
+          所有候选商品都被判定为不匹配，已隐藏；原始数据仍保存在数据库中，便于复核。
+        }
+      </div>
+    }
+
+    @if (result().products.length > 0) {
+      <section class="result-section">
+        <header class="section-head">
+          <h4>匹配商品</h4>
+          <span>{{ result().matchedCount }} 个</span>
+        </header>
+        <div class="product-grid">
+          @for (product of result().products; track product.id) {
+            <app-product-card [product]="product" (reviewed)="reviewed.emit($event)" />
+          }
+        </div>
+      </section>
+    }
+
+    @if (result().uncertainProducts.length > 0) {
+      <nz-collapse class="uncertain-collapse" [nzBordered]="false">
+        <nz-collapse-panel [nzHeader]="header" [nzActive]="true">
+          <ng-template #header>
+            <div class="uncertain-head">
+              <span class="uncertain-title">
+                待确认商品
+                <span class="count-pill">{{ result().uncertainCount }}</span>
+              </span>
+              <span class="uncertain-hint">AI 信息不足或判断失败，需要人工打开商品页面核对</span>
+            </div>
+          </ng-template>
+          <div class="product-grid">
+            @for (product of result().uncertainProducts; track product.id) {
+              <app-product-card [product]="product" (reviewed)="reviewed.emit($event)" />
+            }
+          </div>
+        </nz-collapse-panel>
+      </nz-collapse>
+    }
+
+    @if (result().excludedCount > 0) {
+      <p class="excluded-line">
+        另有 {{ result().excludedCount }} 个候选商品被判定为不匹配，已隐藏（原始数据仍保存在数据库中，便于复核）。
+      </p>
+    }
+  }
+
+  @if (result().status === 'EMPTY') {
+    <nz-empty class="empty-state" nzNotFoundImage="simple" nzNotFoundContent="未找到符合条件的商品">
+    </nz-empty>
+  }
+</div>

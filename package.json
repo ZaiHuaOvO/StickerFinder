@@ -1,0 +1,17 @@
+{
+  "name": "stickerfinder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "StickerFinder：造景贴纸跨平台商品检索 Demo",
+  "scripts": {
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "build": "npm --prefix backend run build && npm --prefix frontend run build",
+    "dev:backend": "npm --prefix backend run start:dev",
+    "dev:frontend": "npm --prefix frontend run start",
+    "start:backend": "npm --prefix backend run start:prod",
+    "db:create": "npm --prefix backend run db:create",
+    "check:config": "npm --prefix backend run check:config",
+    "playwright:install": "npm --prefix backend run playwright:install",
+    "browser:login": "npm --prefix backend run browser:login --"
+  }
+}

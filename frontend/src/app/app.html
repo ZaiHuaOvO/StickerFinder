@@ -1,0 +1,206 @@
+<div class="app-shell">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <span class="brand-mark__back"></span>
+        <span class="brand-mark__front">SF</span>
+      </div>
+      <div class="brand-copy">
+        <h1>StickerFinder</h1>
+        <p>造景贴纸 · 跨平台检索与内容识别</p>
+      </div>
+    </div>
+
+    <div class="topbar-status">
+      @if (aiStatus(); as ai) {
+        <span
+          class="status-pill"
+          [class.ok]="ai.configured"
+          nz-tooltip
+          [nzTooltipTitle]="ai.reason"
+        >
+          <span class="status-dot"></span>
+          DeepSeek {{ ai.configured ? '已配置' : '未配置' }}
+        </span>
+      } @else {
+        <span class="status-pill"><span class="status-dot"></span> 状态加载中</span>
+      }
+      @for (chip of providerChips(); track chip.platform) {
+        <span
+          class="status-pill"
+          [class.ok]="chip.status?.configured ?? false"
+          nz-tooltip
+          [nzTooltipTitle]="chip.status?.reason ?? '状态加载中'"
+        >
+          <span class="status-dot"></span>{{ chip.meta.label }}
+        </span>
+      }
+      <button
+        nz-button
+        nzType="text"
+        nzSize="small"
+        type="button"
+        (click)="loadStatuses()"
+        nz-tooltip
+        nzTooltipTitle="重新检查平台配置"
+        aria-label="重新检查平台配置"
+      >
+        <span nz-icon nzType="reload"></span>
+      </button>
+    </div>
+  </header>
+
+  <main class="main">
+    <app-search-form
+      [busy]="searching()"
+      [visionEnabled]="aiStatus()?.visionEnabled ?? false"
+      (search)="onSearch($event)"
+    ></app-search-form>
+
+    @if (statusesError(); as statusesError) {
+      <nz-alert
+        class="block-gap"
+        nzType="warning"
+        nzShowIcon
+        nzMessage="平台状态读取失败"
+        [nzDescription]="statusesError"
+      />
+    }
+
+    @if (error(); as err) {
+      <nz-alert
+        class="block-gap"
+        nzType="error"
+        nzShowIcon
+        nzMessage="操作未完成"
+        [nzDescription]="err"
+      />
+    }
+
+    @if (aiStatus(); as ai) {
+      @if (!ai.configured) {
+        <nz-alert
+          class="block-gap"
+          nzType="warning"
+          nzShowIcon
+          nzMessage="DeepSeek 尚未配置"
+          [nzDescription]="
+            '商品会照常采集并保留原始信息，但 AI 识别结果会全部进入待确认区域，不会伪装成匹配。原因：' +
+            ai.reason
+          "
+        />
+      }
+    }
+
+    @if (detail(); as d) {
+      <section class="run-summary">
+        <div class="run-summary__main">
+          <span class="eyebrow">SEARCH TARGET</span>
+          <h2>{{ d.targetName }}</h2>
+          <div class="target-meta">
+            @if (d.seriesName) {
+              <span class="target-series">系列：{{ d.seriesName }}</span>
+            }
+            @for (alias of d.aliases; track alias) {
+              <nz-tag>{{ alias }}</nz-tag>
+            }
+            @if (d.referenceImageProvided) {
+              <nz-tag nzColor="green">已上传参考图</nz-tag>
+            }
+          </div>
+          <div class="run-times">
+            <span>开始：{{ formattedStartedAt() }}</span>
+            @if (d.completedAt) {
+              <span>完成：{{ formattedCompletedAt() }}</span>
+            }
+          </div>
+        </div>
+
+        <div class="run-stats">
+          <div class="stat">
+            <strong>{{ totalMatched() }}</strong>
+            <span>匹配商品</span>
+          </div>
+          <div class="stat stat--uncertain">
+            <strong>{{ totalUncertain() }}</strong>
+            <span>待确认</span>
+          </div>
+          <div class="run-status">
+            @if (searching()) {
+              <nz-spin nzSimple nzSize="small"></nz-spin>
+            }
+            <nz-tag [nzColor]="runStatusTone()">{{ runStatusLabel() }}</nz-tag>
+          </div>
+        </div>
+      </section>
+
+      <nz-tabs class="platform-tabs" [nzAnimated]="false">
+        @for (result of d.platforms; track result.platform) {
+          <nz-tab [nzTitle]="tabTitle">
+            <ng-template #tabTitle>
+              <span class="tab-title">
+                <span class="tab-dot" [class]="'dot-' + result.status.toLowerCase()"></span>
+                {{ platformMeta[result.platform].label }}
+                <span class="tab-count">{{ result.matchedCount }}</span>
+                @if (result.uncertainCount > 0) {
+                  <span class="tab-uncertain">+{{ result.uncertainCount }}</span>
+                }
+              </span>
+            </ng-template>
+            <app-platform-panel
+              [result]="result"
+              (reviewed)="onReviewed($event)"
+            ></app-platform-panel>
+          </nz-tab>
+        }
+      </nz-tabs>
+    } @else if (searching()) {
+      <section class="placeholder-card">
+        <nz-spin nzSimple nzSize="large"></nz-spin>
+        <h3>正在创建搜索任务…</h3>
+        <p>随后会依次访问四个平台，并对去重后的候选商品调用 AI 识别。</p>
+      </section>
+    } @else {
+      <section class="welcome">
+        <div class="welcome__head">
+          <span class="eyebrow">HOW IT WORKS</span>
+          <h2>真实采集 · 内容识别 · 人工可复核</h2>
+          <p>
+            这不是一个“看起来有结果”的演示。未配置的平台、无法访问的页面和无法确认的商品都会被明确标记。
+          </p>
+        </div>
+        <div class="steps">
+          <article class="step">
+            <span class="step-index">01</span>
+            <h3>输入具体名称</h3>
+            <p>尽量写清系列和款式，例如“A系列 B贴纸”。别名和参考图可选。</p>
+          </article>
+          <article class="step">
+            <span class="step-index">02</span>
+            <h3>四平台分别采集</h3>
+            <p>淘宝、拼多多使用官方 API；抖音、小红书使用 Playwright 可见浏览器。</p>
+          </article>
+          <article class="step">
+            <span class="step-index">03</span>
+            <h3>AI 判断实际内容</h3>
+            <p>区分单款、指定 SKU、组合装和全系列；证据不足时进入待确认。</p>
+          </article>
+          <article class="step">
+            <span class="step-index">04</span>
+            <h3>人工核对价格</h3>
+            <p>每个商品保留原始链接、价格来源和采集时间，可手动确认匹配结果。</p>
+          </article>
+        </div>
+        <div class="configured-note">
+          <span nz-icon nzType="safety-certificate"></span>
+          当前已配置 {{ configuredCount() }} / 4 个平台的数据来源。未配置的平台会明确显示“该平台尚未配置可用的数据来源”。
+        </div>
+      </section>
+    }
+  </main>
+
+  <footer class="footer">
+    <span>StickerFinder v0.1.0 · 内部验证工具</span>
+    <span>所有价格附来源与采集时间；未获取的数据不会用虚假值填充。</span>
+  </footer>
+</div>
