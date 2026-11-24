@@ -169,9 +169,9 @@ export class App implements OnInit, OnDestroy {
     ),
   );
   readonly filteredUnverifiedProducts = computed(() =>
-    this.filteredUnifiedProducts().filter(
-      (product) => !this.pricedCandidateIds().has(product.id),
-    ),
+    this.filteredUnifiedProducts()
+      .filter((product) => !this.pricedCandidateIds().has(product.id))
+      .sort((a, b) => this.compareProductPrice(a, b)),
   );
   readonly potentialCheaperProducts = computed(() => {
     const ids = new Set(
@@ -190,7 +190,9 @@ export class App implements OnInit, OnDestroy {
     const ids = new Set(
       this.priceSummary()?.potentialCheaperCandidateIds ?? [],
     );
-    return this.allUncertainProducts().filter((product) => !ids.has(product.id));
+    return this.allUncertainProducts()
+      .filter((product) => !ids.has(product.id))
+      .sort((a, b) => this.compareProductPrice(a, b));
   });
   readonly potentialTitle = computed(() =>
     this.priceSummary()?.bestPrice ? '可能更便宜 · 待确认' : '待确认商品',
@@ -460,6 +462,13 @@ export class App implements OnInit, OnDestroy {
       }
     }
     return product.price?.amount ?? Number.POSITIVE_INFINITY;
+  }
+
+  private compareProductPrice(a: Product, b: Product): number {
+    const left = this.productReferencePrice(a);
+    const right = this.productReferencePrice(b);
+    if (left !== right) return left - right;
+    return b.collectedAt.localeCompare(a.collectedAt);
   }
 
   private ensurePlatformFilter(detail: SearchDetail): void {

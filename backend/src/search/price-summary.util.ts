@@ -47,13 +47,32 @@ function effectiveStatus(candidate: ProductCandidate): MatchStatusEnum | null {
 function inferSkuGroup(
   matchType: MatchTypeEnum | null,
   skuName: string,
+  useProductMatchType = true,
 ): PriceComparisonGroup {
   const name = normalizeTargetText(skuName);
   if (FULL_SET_PATTERN.test(name)) return 'TARGET_FULL_SET';
   if (BUNDLE_PATTERN.test(name)) return 'TARGET_BUNDLE';
+  if (!useProductMatchType) return 'TARGET_SINGLE';
   if (matchType === MatchTypeEnum.CONTAINS_TARGET_FULL_SET) return 'TARGET_FULL_SET';
   if (matchType === MatchTypeEnum.CONTAINS_TARGET_BUNDLE) return 'TARGET_BUNDLE';
   return 'TARGET_SINGLE';
+}
+
+/**
+ * 同一商品可能同时包含单款与组合装 SKU。只要任一命中 SKU 的名称明确写了
+ * “+ / 组合 / 套装 / 合集”等，就以每个 SKU 自己的名称为准；
+ * 否则才退回商品级 matchType（例如 SKU 名称只是“款式A/B”）。
+ */
+function hasExplicitSkuGroupSignal(candidate: ProductCandidate): boolean {
+  const rule = candidate.ruleResult;
+  if (!rule) return false;
+  const matchedIds = rule.matchedSkuIds ?? [];
+  return (candidate.skuData ?? []).some((sku, index) => {
+    const skuId = sku.skuId ?? `sku-${index + 1}`;
+    if (!matchedIds.includes(skuId)) return false;
+    const name = normalizeTargetText(sku.name);
+    return FULL_SET_PATTERN.test(name) || BUNDLE_PATTERN.test(name);
+  });
 }
 
 function inferUncertainGroup(candidate: ProductCandidate): PriceComparisonGroup | null {
@@ -219,11 +238,12 @@ export function buildPriceSummary(candidates: ProductCandidate[]): PriceSummaryD
 
     const matchedIds = rule.matchedSkuIds ?? [];
     const skus = candidate.skuData ?? [];
+    const useProductMatchType = !hasExplicitSkuGroupSignal(candidate);
     skus.forEach((sku, index) => {
       const skuId = sku.skuId ?? `sku-${index + 1}`;
       if (!matchedIds.includes(skuId)) return;
       if (typeof sku.price !== 'number' || sku.price <= 0) return;
-      const group = inferSkuGroup(rule.matchType, sku.name);
+      const group = inferSkuGroup(rule.matchType, sku.name, useProductMatchType);
       items.push(toItem(candidate, skuId, sku.name, sku.price, currency, group));
     });
   }
@@ -240,11 +260,15 @@ export function buildPriceSummary(candidates: ProductCandidate[]): PriceSummaryD
   const bestByGroup = groups
     .map((summary) => bestOfGroup(items, summary))
     .filter((item): item is PriceSummaryItemDto => item !== null);
+  // 标题是“最低已确认价格”，因此跨分组取真实最低价；
+  // 分组仍由 bestByGroup 单独展示，避免用组合装冒充单款。
   const bestPrice =
-    bestByGroup.find((item) => item.comparisonGroup === 'TARGET_SINGLE') ??
-    bestByGroup.find((item) => item.comparisonGroup === 'TARGET_BUNDLE') ??
-    bestByGroup.find((item) => item.comparisonGroup === 'TARGET_FULL_SET') ??
-    null;
+    [...items]
+      .filter((item) => item.comparisonGroup !== 'WHOLESALE')
+      .sort(
+        (a, b) =>
+          a.amount - b.amount || b.observedAt.localeCompare(a.observedAt),
+      )[0] ?? null;
 
   const platformsPresent = [
     PlatformEnum.TAOBAO,

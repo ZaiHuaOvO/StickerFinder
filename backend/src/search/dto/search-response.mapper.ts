@@ -395,6 +395,37 @@ function byRuleThenTime(a: ProductDto, b: ProductDto): number {
   return b.collectedAt.getTime() - a.collectedAt.getTime();
 }
 
+/** 待确认商品的参考价：规则价 → 命中 SKU 最低价 → 商品展示价；没有价格排最后。 */
+function referenceAmount(product: ProductDto): number {
+  const ruleAmount = product.rule?.price.amount;
+  if (typeof ruleAmount === 'number' && ruleAmount > 0) return ruleAmount;
+  const matchedIds = product.rule?.matchedSkuIds ?? [];
+  const skuPrices = product.skuOptions
+    .map((sku, index) => ({
+      id: sku.skuId ?? `sku-${index + 1}`,
+      price: sku.price,
+    }))
+    .filter(
+      (entry) =>
+        matchedIds.includes(entry.id) &&
+        typeof entry.price === 'number' &&
+        entry.price > 0,
+    )
+    .map((entry) => entry.price as number);
+  if (skuPrices.length > 0) return Math.min(...skuPrices);
+  const amount = product.price?.amount;
+  return typeof amount === 'number' && amount > 0
+    ? amount
+    : Number.POSITIVE_INFINITY;
+}
+
+function byUncertainPrice(a: ProductDto, b: ProductDto): number {
+  const left = referenceAmount(a);
+  const right = referenceAmount(b);
+  if (left !== right) return left - right;
+  return byRuleThenTime(a, b);
+}
+
 export function toProductDto(candidate: ProductCandidate): ProductDto {
   const observations = [...(candidate.observations ?? [])]
     .sort((a, b) => a.observedAt.getTime() - b.observedAt.getTime())
@@ -497,9 +528,11 @@ export function toPlatformResultDto(
   const matched = products.filter(
     (product) => product.effectiveRuleStatus === MatchStatusEnum.MATCH,
   );
-  const uncertain = products.filter(
-    (product) => product.effectiveRuleStatus === MatchStatusEnum.UNCERTAIN,
-  );
+  const uncertain = products
+    .filter(
+      (product) => product.effectiveRuleStatus === MatchStatusEnum.UNCERTAIN,
+    )
+    .sort(byUncertainPrice);
   const excluded = products.filter(
     (product) => product.effectiveRuleStatus === MatchStatusEnum.NO_MATCH,
   );

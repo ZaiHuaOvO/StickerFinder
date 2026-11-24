@@ -18,7 +18,7 @@ import {
   SearchRun,
 } from '../entities';
 import { buildSearchRule, evaluateProductRule } from '../rules/rule.engine';
-import { ProductSearchRule } from '../rules/rule.types';
+import { ProductSearchRule, RuleStatusEnum } from '../rules/rule.types';
 import {
   SearchDetailDto,
   toSearchDetailDto,
@@ -128,6 +128,10 @@ export class ReplayService {
             error: detail?.error ?? null,
           },
         });
+        if (!detail && evaluation.status === RuleStatusEnum.PENDING_DETAIL) {
+          evaluation.reason =
+            '本地测试数据未包含该商品详情（未调用外部接口）';
+        }
 
         const candidateId = `${fixture.id}-${platformKey}-${index + 1}`;
         const ruleResult = Object.assign(new ProductRuleResult(), {

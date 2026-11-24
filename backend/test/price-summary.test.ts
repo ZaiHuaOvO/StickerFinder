@@ -176,6 +176,35 @@ describe('buildPriceSummary (rule results)', () => {
     assert.equal(full?.minAmount, 76.9);
   });
 
+  it('classifies each SKU by its own name and picks the absolute lowest retail price', () => {
+    const summary = buildPriceSummary([
+      candidate({
+        id: 'mixed-sku-names',
+        skuData: [
+          { skuId: 's1', name: '利胜15.0【菜食场】', price: 11.2 },
+          { skuId: 's2', name: '利胜15.0【菜食场+零食超市】', price: 19.8 },
+          { skuId: 's3', name: '利胜15.0【菜食场+误入妖怪】', price: 19.8 },
+        ],
+        rule: {
+          matchType: MatchTypeEnum.CONTAINS_TARGET_BUNDLE,
+          matchedSkuIds: ['s1', 's2', 's3'],
+        },
+      }),
+      candidate({
+        id: 'single-only',
+        skuData: [{ skuId: 's1', name: '菜食场-利胜15.0', price: 12.8 }],
+        rule: {
+          matchType: MatchTypeEnum.TARGET_VARIANT,
+          matchedSkuIds: ['s1'],
+        },
+      }),
+    ]);
+    assert.equal(summary.bestPrice?.amount, 11.2);
+    assert.equal(summary.bestPrice?.comparisonGroup, 'TARGET_SINGLE');
+    const bundle = summary.groups.find((group) => group.group === 'TARGET_BUNDLE');
+    assert.equal(bundle?.minAmount, 19.8);
+  });
+
   it('keeps 1688 wholesale prices out of the retail best price', () => {
     const summary = buildPriceSummary([
       candidate({

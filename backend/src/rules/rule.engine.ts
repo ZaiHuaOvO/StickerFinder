@@ -298,7 +298,10 @@ export function validatePrice(
       amount,
       currency,
       source: 'listing',
-      note: '只有商品展示价/起步价，未确认具体 SKU',
+      note:
+        matchedSkuIds.length > 0
+          ? '命中的 SKU 未返回价格，仅有商品展示价；未确认具体 SKU 成交价'
+          : '只有商品展示价/起步价，未确认具体 SKU',
     };
   }
   return {
