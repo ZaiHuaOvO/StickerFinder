@@ -9,6 +9,16 @@
     </div>
 
     <div class="topbar-status">
+      <button
+        nz-button
+        nzType="text"
+        nzSize="small"
+        type="button"
+        (click)="openHistory()"
+      >
+        <span nz-icon nzType="history"></span>
+        历史记录
+      </button>
       @if (aiStatus(); as ai) {
         <span
           class="status-pill"
@@ -38,6 +48,21 @@
   </header>
 
   <main class="main">
+    @if (historyOpen()) {
+      @if (error(); as err) {
+        <nz-alert
+          class="block-gap"
+          nzType="error"
+          nzShowIcon
+          nzMessage="历史记录读取失败"
+          [nzDescription]="err"
+        />
+      }
+      <app-search-history
+        (openDetail)="openHistoryDetail($event)"
+        (close)="closeHistory()"
+      ></app-search-history>
+    } @else {
     <app-search-form
       [busy]="searching()"
       [statuses]="statuses()"
@@ -61,6 +86,16 @@
         nzShowIcon
         nzMessage="操作未完成"
         [nzDescription]="err"
+      />
+    }
+
+    @if (warning(); as msg) {
+      <nz-alert
+        class="block-gap"
+        nzType="warning"
+        nzShowIcon
+        nzMessage="部分平台未完成"
+        [nzDescription]="msg"
       />
     }
 
@@ -94,6 +129,14 @@
           [nzDescription]="ai.reason"
         />
       }
+    }
+
+    @if (readonlyDetail()) {
+      <div class="history-return">
+        <button nz-button nzType="text" type="button" (click)="backToHistory()">
+          ← 返回历史记录
+        </button>
+      </div>
     }
 
     @if (detail(); as d) {
@@ -155,34 +198,142 @@
         </div>
       </section>
 
-      <nz-tabs class="platform-tabs" [nzAnimated]="false">
-        @for (result of visiblePlatforms(); track result.platform) {
-          <nz-tab [nzTitle]="tabTitle">
-            <ng-template #tabTitle>
-              <span class="tab-title">
-                <span class="tab-dot" [class]="'dot-' + result.status.toLowerCase()"></span>
-                {{ platformMeta[result.platform].label }}
-                <span class="tab-count">{{ result.matchedCount }}</span>
-                @if (result.uncertainCount > 0) {
-                  <span class="tab-uncertain">+{{ result.uncertainCount }}</span>
-                }
-              </span>
-            </ng-template>
-            <app-platform-panel
-              [result]="result"
-              [searchId]="d.searchId"
-              [busyTaskId]="verificationBusyTaskId()"
-              (reviewed)="onReviewed($event)"
-              (verification)="onVerificationAction($event)"
-            ></app-platform-panel>
-          </nz-tab>
+      <app-price-summary
+        [summary]="priceSummary()"
+        [platforms]="d.platforms"
+        [searching]="searching()"
+        (showUncertain)="scrollToUncertain()"
+      ></app-price-summary>
+
+      <section class="unified-results">
+        <div class="unified-head">
+          <h3>商品结果</h3>
+          <div class="platform-filter">
+            <button
+              type="button"
+              [class.active]="platformFilter() === 'ALL'"
+              (click)="setPlatformFilter('ALL')"
+            >
+              全部
+            </button>
+            @for (platform of filterPlatforms(); track platform) {
+              <button
+                type="button"
+                [class.active]="platformFilter() === platform"
+                (click)="setPlatformFilter(platform)"
+              >
+                {{ platformMeta[platform].label }}
+              </button>
+            }
+          </div>
+        </div>
+
+        @if (filteredPricedProducts().length) {
+          <div class="product-grid">
+            @for (product of filteredPricedProducts(); track product.id) {
+              <app-product-card
+                [product]="product"
+                [readonlyMode]="readonlyDetail()"
+                (reviewed)="onReviewed($event)"
+              ></app-product-card>
+            }
+          </div>
+        } @else {
+          <div class="empty-results">
+            @if (platformFilter() !== 'ALL') {
+              该平台暂无已确认价格商品。
+            } @else if (priceSummary()?.unverifiedMatchCount) {
+              已找到商品，目标规格价格待核实。
+            } @else {
+              暂未找到已确认的商品。
+            }
+          </div>
         }
-      </nz-tabs>
+
+        @if (filteredUnverifiedProducts().length) {
+          <details class="unverified-matches">
+            <summary>
+              已确认同款 · 价格待核实 {{ filteredUnverifiedProducts().length }} 个
+            </summary>
+            <div class="product-grid">
+              @for (product of filteredUnverifiedProducts(); track product.id) {
+                <app-product-card
+                  [product]="product"
+                [readonlyMode]="readonlyDetail()"
+                  (reviewed)="onReviewed($event)"
+                ></app-product-card>
+              }
+            </div>
+          </details>
+        }
+
+        @if (potentialCheaperProducts().length) {
+          <section id="uncertain-section" class="potential-section">
+            <div class="section-head">
+              <h4>{{ potentialTitle() }}</h4>
+              <span>{{ potentialCheaperProducts().length }} 个</span>
+            </div>
+            <div class="product-grid">
+              @for (product of potentialCheaperProducts(); track product.id) {
+                <app-product-card
+                  [product]="product"
+                [readonlyMode]="readonlyDetail()"
+                  (reviewed)="onReviewed($event)"
+                ></app-product-card>
+              }
+            </div>
+          </section>
+        }
+
+        @if (otherUncertainProducts().length) {
+          <details class="other-uncertain">
+            <summary>其他待确认 {{ otherUncertainProducts().length }} 个</summary>
+            <div class="product-grid">
+              @for (product of otherUncertainProducts(); track product.id) {
+                <app-product-card
+                  [product]="product"
+                [readonlyMode]="readonlyDetail()"
+                  (reviewed)="onReviewed($event)"
+                ></app-product-card>
+              }
+            </div>
+          </details>
+        }
+      </section>
+
+      <details class="platform-details">
+        <summary>按平台查看 / 来源状态</summary>
+        <nz-tabs class="platform-tabs" [nzAnimated]="false">
+          @for (result of visiblePlatforms(); track result.platform) {
+            <nz-tab [nzTitle]="tabTitle">
+              <ng-template #tabTitle>
+                <span class="tab-title">
+                  <span class="tab-dot" [class]="'dot-' + result.status.toLowerCase()"></span>
+                  {{ platformMeta[result.platform].label }}
+                  <span class="tab-count">{{ result.matchedCount }}</span>
+                  @if (result.uncertainCount > 0) {
+                    <span class="tab-uncertain">+{{ result.uncertainCount }}</span>
+                  }
+                </span>
+              </ng-template>
+              <app-platform-panel
+                [result]="result"
+                [searchId]="d.searchId"
+                [busyTaskId]="verificationBusyTaskId()"
+                [readonlyMode]="readonlyDetail()"
+                (reviewed)="onReviewed($event)"
+                (verification)="onVerificationAction($event)"
+              ></app-platform-panel>
+            </nz-tab>
+          }
+        </nz-tabs>
+      </details>
     } @else if (searching()) {
       <section class="placeholder-card">
         <nz-spin nzSimple nzSize="large"></nz-spin>
         <h3>正在搜索…</h3>
       </section>
+    }
     }
   </main>
 </div>

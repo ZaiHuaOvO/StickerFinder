@@ -326,3 +326,131 @@
     width: 100%;
   }
 }
+
+.unified-results {
+  margin-top: 18px;
+}
+
+.unified-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.unified-head h3 {
+  margin: 0;
+}
+
+.platform-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.platform-filter button {
+  padding: 4px 11px;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.platform-filter button.active {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.unified-results .product-grid,
+.potential-section .product-grid,
+.other-uncertain .product-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.empty-results {
+  margin-top: 14px;
+  padding: 18px;
+  color: var(--ink-soft);
+  text-align: center;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+}
+
+.potential-section {
+  margin-top: 20px;
+  padding: 14px;
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.section-head h4 {
+  margin: 0;
+}
+
+.section-head span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.other-uncertain {
+  margin-top: 16px;
+}
+
+.other-uncertain > summary {
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.unverified-matches {
+  margin-top: 16px;
+}
+
+.unverified-matches > summary {
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.platform-details {
+  margin-top: 22px;
+}
+
+.platform-details > summary {
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+@media (max-width: 640px) {
+  .unified-results .product-grid,
+  .potential-section .product-grid,
+  .other-uncertain .product-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .unified-head {
+    align-items: flex-start;
+  }
+}
+
+.history-return {
+  display: flex;
+  justify-content: flex-start;
+}

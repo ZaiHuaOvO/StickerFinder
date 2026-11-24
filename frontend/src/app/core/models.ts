@@ -40,6 +40,7 @@ export type SearchRunStatus =
   | 'PENDING'
   | 'RUNNING'
   | 'COMPLETED'
+  | 'PARTIAL'
   | 'FAILED'
   | 'INTERRUPTED'
   | 'CANCELLED'
@@ -92,7 +93,89 @@ export type PriceType =
   | 'FULL_SET'
   | 'LOWEST_SKU'
   | 'LISTING'
+  | 'COUPON_PRICE'
   | 'UNKNOWN';
+
+export type PromotionType =
+  | 'COUPON'
+  | 'SHOP_ACTIVITY'
+  | 'PLATFORM_ACTIVITY'
+  | 'DISCOUNT'
+  | 'OTHER';
+
+export interface Promotion {
+  id: string;
+  skuId: string | null;
+  promotionType: PromotionType;
+  promotionTypeLabel: string;
+  name: string;
+  amount: number | null;
+  currency: string | null;
+  discountRate: number | null;
+  minimumSpend: number | null;
+  startTime: string | null;
+  endTime: string | null;
+  description: string | null;
+  promotionUrl: string | null;
+  expired: boolean;
+  source: string | null;
+  observedAt: string;
+}
+
+export type PriceComparisonGroup =
+  | 'TARGET_SINGLE'
+  | 'TARGET_BUNDLE'
+  | 'TARGET_FULL_SET'
+  | 'WHOLESALE';
+
+export interface PriceSummaryItem {
+  candidateId: string;
+  platform: Platform;
+  title: string;
+  shopName: string | null;
+  productUrl: string;
+  imageUrl: string | null;
+  skuId: string | null;
+  skuName: string;
+  amount: number;
+  currency: string;
+  comparisonGroup: PriceComparisonGroup;
+  priceType: string;
+  observedAt: string;
+}
+
+export interface PriceGroupSummary {
+  group: PriceComparisonGroup;
+  minAmount: number | null;
+  maxAmount: number | null;
+  currency: string | null;
+  verifiedCount: number;
+}
+
+export interface PlatformPriceSummary {
+  platform: Platform;
+  groups: PriceGroupSummary[];
+  wholesale: {
+    priceMin: number | null;
+    priceMax: number | null;
+    currency: string | null;
+    unit: string | null;
+    minOrderQuantity: number | null;
+  } | null;
+}
+
+export interface PriceSummary {
+  bestPrice: PriceSummaryItem | null;
+  bestComparisonGroup: PriceComparisonGroup | null;
+  bestByGroup: PriceSummaryItem[];
+  groups: PriceGroupSummary[];
+  platforms: PlatformPriceSummary[];
+  items: PriceSummaryItem[];
+  potentialCheaperCandidateIds: string[];
+  otherUncertainCount: number;
+  unverifiedMatchCount: number;
+  totalConfirmed: number;
+}
 
 export type AiStatus = 'OK' | 'FAILED' | 'SKIPPED';
 export type ManualDecision = 'PENDING' | 'MATCH' | 'NO_MATCH';
@@ -118,6 +201,9 @@ export interface SkuOption {
   name: string;
   price?: number;
   imageUrl?: string;
+  /** 接口明确返回的该 SKU 券后价 */
+  couponPrice?: number;
+  couponText?: string;
 }
 
 export interface PriceTier {
@@ -201,7 +287,10 @@ export interface ProductObservation {
   price: PriceInfo | null;
   originalPrice: PriceInfo | null;
   groupPrice: PriceInfo | null;
+  /** 接口明确返回的券后价 */
+  couponPrice: PriceInfo | null;
   wholesalePrice: WholesalePriceInfo | null;
+  promotions: Promotion[];
   salesText: string | null;
   rating: number | null;
   region: string | null;
@@ -225,6 +314,7 @@ export interface Product {
   price: PriceInfo | null;
   groupPrice: PriceInfo | null;
   wholesalePrice: WholesalePriceInfo | null;
+  promotions: Promotion[];
   sourceType: SourceType;
   collectedAt: string;
   effectiveMatchStatus: MatchStatus;
@@ -308,6 +398,7 @@ export interface SearchDetail {
   startedAt: string;
   completedAt: string | null;
   platforms: PlatformResult[];
+  priceSummary: PriceSummary | null;
 }
 
 export interface ProviderChannelStatusInfo {
@@ -382,6 +473,36 @@ export interface SearchRunSummary {
   startedAt: string;
   completedAt: string | null;
   errorMessage: string | null;
+}
+
+export interface SearchHistoryItem {
+  searchId: string;
+  keyword: string;
+  targetName: string;
+  seriesName: string | null;
+  status: SearchRunStatus;
+  platforms: Platform[];
+  productCount: number;
+  matchedCount: number;
+  startedAt: string;
+  completedAt: string | null;
+  errorMessage: string | null;
+}
+
+export interface SearchHistoryPage {
+  items: SearchHistoryItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface SearchHistoryQuery {
+  page?: number;
+  pageSize?: number;
+  keyword?: string;
+  status?: SearchRunStatus | '';
+  startTime?: string;
+  endTime?: string;
 }
 
 export interface VerificationBrowserInfo {

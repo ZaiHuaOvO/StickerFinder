@@ -34,8 +34,10 @@ import {
   ProductCandidate,
   ProductMatchResult,
   ProductObservation,
+  ProductPromotion,
   SearchRun,
 } from '../entities';
+import { dedupePromotions } from '../common/utils/promotion.util';
 
 export interface AiMatchBudget {
   remaining: number;
@@ -91,6 +93,8 @@ export class CandidateAggregationService {
     private readonly candidateRepo: Repository<ProductCandidate>,
     @InjectRepository(ProductObservation)
     private readonly observationRepo: Repository<ProductObservation>,
+    @InjectRepository(ProductPromotion)
+    private readonly promotionRepo: Repository<ProductPromotion>,
     @InjectRepository(ProductMatchResult)
     private readonly matchRepo: Repository<ProductMatchResult>,
   ) {}
@@ -101,7 +105,7 @@ export class CandidateAggregationService {
   ): Promise<ProductCandidate[]> {
     const candidates = await this.candidateRepo.find({
       where: { searchRunId, platform },
-      relations: { observations: true, matchResult: true },
+      relations: { observations: { promotions: true }, matchResult: true },
       order: { collectedAt: 'ASC' },
     });
     for (const candidate of candidates) {
@@ -530,6 +534,7 @@ export class CandidateAggregationService {
       priceData: product.price ?? null,
       originalPriceData: product.originalPrice ?? null,
       groupPriceData: product.groupPrice ?? null,
+      couponPriceData: product.couponPrice ?? null,
       wholesalePriceData: product.wholesalePrice ?? null,
       salesText: product.salesText?.slice(0, 100) ?? null,
       rating: typeof product.rating === 'number' ? product.rating : null,
@@ -540,7 +545,57 @@ export class CandidateAggregationService {
       observedAt,
       collectedAt: new Date(),
     });
-    return this.observationRepo.save(observation);
+    const saved = await this.observationRepo.save(observation);
+    try {
+      saved.promotions = await this.savePromotions(saved, product);
+    } catch (error) {
+      // 优惠是补充数据：保存失败不能让已采集的商品快照丢失，但必须留下明确错误记录。
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(
+        `优惠信息保存失败 observation=${saved.id}：${message}`,
+      );
+      task.note = task.note
+        ? `${task.note}\n优惠信息保存失败：${message}`
+        : `优惠信息保存失败：${message}`;
+      saved.promotions = [];
+    }
+    return saved;
+  }
+
+  /**
+   * 优惠信息跟随观察记录保存；同一次采集内的重复条目去重，
+   * 不同采集时间由不同观察记录各自保留。保存失败会向上抛出，不能静默丢数据。
+   */
+  private async savePromotions(
+    observation: ProductObservation,
+    product: NormalizedProduct,
+  ): Promise<ProductPromotion[]> {
+    const promotions = dedupePromotions(product.promotions ?? []);
+    if (promotions.length === 0) return [];
+    const observedAt = toDate(product.collectedAt);
+    const rows = promotions.map((promotion) =>
+      this.promotionRepo.create({
+        observationId: observation.id,
+        skuId: promotion.skuId ? promotion.skuId.slice(0, 200) : null,
+        platform: product.platform,
+        promotionType: promotion.promotionType,
+        name: promotion.name.slice(0, 255),
+        amount: promotion.amount ?? null,
+        currency: promotion.currency ?? null,
+        discountRate: promotion.discountRate ?? null,
+        minimumSpend: promotion.minimumSpend ?? null,
+        startTime: promotion.startTime ? toDate(promotion.startTime) : null,
+        endTime: promotion.endTime ? toDate(promotion.endTime) : null,
+        description: promotion.description ?? null,
+        promotionUrl: promotion.promotionUrl ?? null,
+        source: product.providerKey ?? null,
+        rawData: promotion.rawData
+          ? (sanitizeRawData(promotion.rawData) as Record<string, unknown>)
+          : null,
+        observedAt,
+      }),
+    );
+    return this.promotionRepo.save(rows);
   }
 
   /**

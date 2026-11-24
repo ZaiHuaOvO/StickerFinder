@@ -6,7 +6,7 @@
 
 本项目的第一目标是 **验证数据真实性**，不是堆功能。未配置的平台、无法访问的页面、无法确认的商品都会被明确标记，不会用模拟商品或虚构价格填充。
 
-> 当前状态：EveryInfra 已接入并完成真实搜索/详情验证；Phase 5 已完成 AI 安全层修复、详情与 SKU 核验、并行搜索、取消/中断恢复、一键人工审核、名称规范化与 UI 简化。Phase 3.5 的 Playwright 人工验证与小红书商品模式限制见 [docs/verification.md](docs/verification.md)；Phase 5 交付说明见 [docs/phase5-delivery.md](docs/phase5-delivery.md)。
+> 当前状态：EveryInfra 已接入并完成真实搜索/详情验证；Phase 5 完成 AI 安全层修复、详情与 SKU 核验、并行搜索、取消/中断恢复、一键人工审核、名称规范化与 UI 简化；Phase 6 已加入价格优先的跨平台最低价汇总、分组比价、价格排序与极简商品卡片；Phase 7 已加入淘宝/1688 优惠信息采集与展示、搜索快照持久化、历史记录列表与只读历史详情。Phase 3.5 的 Playwright 人工验证与小红书商品模式限制见 [docs/verification.md](docs/verification.md)；Phase 5 交付说明见 [docs/phase5-delivery.md](docs/phase5-delivery.md)，Phase 6 见 [docs/phase6-pricing.md](docs/phase6-pricing.md)，Phase 7 见 [docs/phase7-promotions-history.md](docs/phase7-promotions-history.md)。
 >
 > Phase 4：EveryInfra 统一数据服务覆盖淘宝、抖音、小红书与 1688（含批发采购价结构）；真实 Key 已配置，四平台搜索与详情均已实际调用验证，配置与费用说明见 [docs/phase4-everyinfra.md](docs/phase4-everyinfra.md)。
 
@@ -143,7 +143,7 @@ DB_SYNCHRONIZE=true
 npm run db:create
 ```
 
-Demo 阶段使用 TypeORM `synchronize` 自动建表。生产或长期使用请改为 `DB_SYNCHRONIZE=false`，并按 [docs/migrations](docs/migrations) 下的增量 SQL 执行迁移（v2 字段见 `phase3-prompt-v2.sql`）。
+Demo 阶段使用 TypeORM `synchronize` 自动建表。生产或长期使用请改为 `DB_SYNCHRONIZE=false`，并执行 TypeORM 迁移：`npm --prefix backend run migration:run`（查看：`migration:show`，回滚：`migration:revert`）。
 
 **方式 B：SQLite（仅本机快速验证）**
 
@@ -486,6 +486,8 @@ AI 识别规则摘要（Prompt v2，`2026-11-23.v2`）：
 - 目标信息与规范化：新增系列别名（`seriesAliases`）与品牌/创作者（`brandNames`）；系列名做全角/半角、空格、常见异体字归一（如 姸→妍），原始值保留。
 - 去重与价格：去重按平台 ID → 规范化链接 → 有充分证据的同商品，不按标题强制合并不同店铺；目标 SKU 已核验时显示具体规格价格，未核验显示「¥X 起 · 规格待确认」，详情失败显示「详情暂不可用」，1688 批发价单独展示。
 - 界面简化：商品卡片使用「已确认同款 / 系列匹配，规格待确认 / 待确认 / 已排除」文字状态；置信度等技术信息收进「判断依据」；平台面板显示「已找到 / 已识别 / 详情核验」进度；被排除商品可展开查看；来源状态默认折叠；搜索表单把别名、系列别名和品牌放入「更多选项」。
+- 价格优先汇总（Phase 6）：搜索结果先显示「当前最低已确认价格」，只使用 MATCH（含人工确认）+ SKU VERIFIED + 价格 VERIFIED、金额大于 0 且币种明确的 SKU 价格；列表价/起售价不参与正式排名。按目标单款、组合装、全系列、1688 批发分组；1688 不参与零售最低价。统一商品列表按分组和价格排序，已确认但价格待核实的商品折叠；只有可能刷新最低价的 UNCERTAIN 才单独展示，其余折叠。后端 `/api/searches/:id` 返回 `priceSummary`，前端不自行计算价格。
+- 1688 搜索实测需要 30–60 秒，使用独立的 `EVERYINFRA_1688_TIMEOUT_MS`（默认 60000），避免被通用 30 秒超时误判失败。
 - 增量字段见 [docs/migrations/phase5-match-safety.sql](docs/migrations/phase5-match-safety.sql)。
 
 参考图视觉比对默认关闭（`AI_VISION_ENABLED=false`），需确认模型支持图片输入后再开启；未开启时上传的参考图仅保留记录，并在识别理由中说明。
@@ -545,7 +547,7 @@ AI 识别规则摘要（Prompt v2，`2026-11-23.v2`）：
 - 商品卡片、待确认区域、人工复核保存与重新分组（使用一次性本地测试数据验证渲染，验证后已清理）。
 - 多来源价格对比与原始采集信息界面（使用一次性本地测试数据验证渲染，验证后已清理）。
 - 桌面/窄屏布局。
-- 后端单元测试：`npm --prefix backend test`（37 项通过，含 Qovia/OKData 响应映射、去重、平台状态聚合、AI Schema 与安全降级、敏感字段脱敏）。
+- 后端单元测试：`npm --prefix backend test`（116 项通过，含 Qovia/OKData 响应映射、去重、平台状态聚合、AI Schema 与安全降级、敏感字段脱敏、价格汇总、优惠解析与整次搜索状态）。
 
 运行后端测试：
 
@@ -575,6 +577,7 @@ npm --prefix backend test
 | Phase 4 DeepSeek 识别 | 已对真实候选完成 live 识别；因缺少 SKU/描述均为待确认，未出现误判 MATCH |
 | Phase 5 前端结果展示 | 已完成四平台 Tabs、渠道状态、卡片、多来源价格对比、待确认、复核入口 |
 | Phase 6 真实性测试 | 已完成 1 次 5+5 真实搜索；3–5 款真实贴纸的人工价格核对待执行 |
+| Phase 7 优惠与历史 | 已完成：淘宝/1688 优惠采集、券后价与活动展示、每次搜索快照落库、历史列表与只读详情；见 [docs/phase7-promotions-history.md](docs/phase7-promotions-history.md) |
 
 ---
 

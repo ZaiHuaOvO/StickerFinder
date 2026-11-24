@@ -1,6 +1,7 @@
 import {
   ObservationSourceEnum,
   PlatformEnum,
+  PromotionTypeEnum,
   ProviderKeyEnum,
   SourceTypeEnum,
 } from '../../../common/enums';
@@ -11,6 +12,10 @@ import {
   WholesalePriceInfo,
 } from '../../../common/interfaces/wholesale-price.interface';
 import { nowIso } from '../../../common/utils/date.util';
+import {
+  dedupePromotions,
+  parsePromotionEntries,
+} from '../../../common/utils/promotion.util';
 import { toHttpUrl } from '../../../common/utils/url.util';
 import {
   asRecord,
@@ -184,6 +189,35 @@ export function mapAlibaba1688Product(
     skuList.length > 0
       ? skuList
       : specsToSkuOptions(raw['specs']);
+  const promotionDetails = parsePromotionEntries(
+    raw['promotion_details'],
+    {
+      fallbackType: PromotionTypeEnum.OTHER,
+      currency: normalizeCurrency(raw['currency']),
+    },
+  );
+  const plainPromotions = parsePromotionEntries(
+    raw['promotions'] ?? raw['promotion_list'] ?? raw['activities'],
+    {
+      fallbackType: PromotionTypeEnum.OTHER,
+      currency: normalizeCurrency(raw['currency']),
+      acceptPlainText: true,
+    },
+  ).filter(
+    (plain) =>
+      !promotionDetails.some((detail) => detail.name === plain.name),
+  );
+  const promotions = dedupePromotions([
+    ...parsePromotionEntries(
+      raw['coupons'] ?? raw['coupon_list'] ?? raw['coupon_info'],
+      {
+        fallbackType: PromotionTypeEnum.COUPON,
+        currency: normalizeCurrency(raw['currency']),
+      },
+    ),
+    ...plainPromotions,
+    ...promotionDetails,
+  ]);
   const orderCount = toNumber(raw['order_count']);
   const soldCount = toNumber(raw['sold_count']);
   const region = [firstString(raw, ['province']), firstString(raw, ['city'])]
@@ -207,6 +241,8 @@ export function mapAlibaba1688Product(
     price: base?.price,
     originalPrice: base?.originalPrice ?? null,
     wholesalePrice,
+    // 观察记录只保存本次响应实际返回的优惠，不继承上一条记录。
+    promotions,
     sourceType: SourceTypeEnum.THIRD_PARTY,
     source: ObservationSourceEnum.THIRD_PARTY_API,
     providerKey: ProviderKeyEnum.EVERYINFRA_ALIBABA1688,

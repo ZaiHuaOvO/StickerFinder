@@ -9,6 +9,7 @@ import {
   PlatformStatusEnum,
   PlatformTaskStatusEnum,
   PriceVerificationStatusEnum,
+  PromotionTypeEnum,
   SkuVerificationStatusEnum,
   SourceTypeEnum,
   VisualMatchEnum,
@@ -21,6 +22,8 @@ import {
   channelsForPlatform,
 } from '../../common/platform-channels';
 import { aggregatePlatformStatus } from '../../common/utils/platform-status.util';
+import { buildPriceSummary } from '../price-summary.util';
+import type { PriceSummaryDto } from './price-summary.dto';
 import type {
   EvidenceEntry,
   SkuDecision,
@@ -30,6 +33,7 @@ import {
   PlatformSearchTask,
   ProductCandidate,
   ProductObservation,
+  ProductPromotion,
   SearchRun,
 } from '../../entities';
 
@@ -65,6 +69,26 @@ export interface MatchDto {
   aiError: string | null;
 }
 
+export interface PromotionDto {
+  id: string;
+  skuId: string | null;
+  promotionType: PromotionTypeEnum;
+  promotionTypeLabel: string;
+  name: string;
+  amount: number | null;
+  currency: string | null;
+  discountRate: number | null;
+  minimumSpend: number | null;
+  startTime: Date | null;
+  endTime: Date | null;
+  description: string | null;
+  promotionUrl: string | null;
+  /** 按当前时间判断，仅用于展示标记，不修改已保存的优惠数据 */
+  expired: boolean;
+  source: string | null;
+  observedAt: Date;
+}
+
 export interface ObservationDto {
   id: string;
   provider: string;
@@ -79,8 +103,11 @@ export interface ObservationDto {
   price: PriceInfo | null;
   originalPrice: PriceInfo | null;
   groupPrice: PriceInfo | null;
+  /** 接口明确返回的券后价；没有返回时为 null */
+  couponPrice: PriceInfo | null;
   /** 1688 批发采购价，独立于零售 price */
   wholesalePrice: WholesalePriceInfo | null;
+  promotions: PromotionDto[];
   salesText: string | null;
   rating: number | null;
   region: string | null;
@@ -104,6 +131,8 @@ export interface ProductDto {
   price: PriceInfo | null;
   groupPrice: PriceInfo | null;
   wholesalePrice: WholesalePriceInfo | null;
+  /** 各观察记录去重后的最新优惠集合 */
+  promotions: PromotionDto[];
   sourceType: string;
   collectedAt: Date;
   effectiveMatchStatus: MatchStatusEnum;
@@ -170,12 +199,29 @@ export interface SearchDetailDto {
   startedAt: Date;
   completedAt: Date | null;
   platforms: PlatformResultDto[];
+  priceSummary: PriceSummaryDto;
 }
 
 const SOURCE_LABELS: Record<string, string> = {
   [ObservationSourceEnum.OFFICIAL_API]: '官方 API',
   [ObservationSourceEnum.THIRD_PARTY_API]: '第三方数据 API',
   [ObservationSourceEnum.PLAYWRIGHT]: 'Playwright 浏览器',
+};
+
+const PROMOTION_TYPE_LABELS: Record<PromotionTypeEnum, string> = {
+  [PromotionTypeEnum.COUPON]: '优惠券',
+  [PromotionTypeEnum.SHOP_ACTIVITY]: '店铺活动',
+  [PromotionTypeEnum.PLATFORM_ACTIVITY]: '平台活动',
+  [PromotionTypeEnum.DISCOUNT]: '优惠',
+  [PromotionTypeEnum.OTHER]: '优惠',
+};
+
+const PROMOTION_TYPE_RANK: Record<PromotionTypeEnum, number> = {
+  [PromotionTypeEnum.COUPON]: 0,
+  [PromotionTypeEnum.SHOP_ACTIVITY]: 1,
+  [PromotionTypeEnum.PLATFORM_ACTIVITY]: 2,
+  [PromotionTypeEnum.DISCOUNT]: 3,
+  [PromotionTypeEnum.OTHER]: 4,
 };
 
 function providerLabel(provider: string): string {
@@ -193,7 +239,75 @@ export function effectiveMatchStatus(match: MatchDto | null): MatchStatusEnum {
   return match.matchStatus;
 }
 
+function toPromotionDto(
+  promotion: ProductPromotion,
+  now: number,
+): PromotionDto {
+  return {
+    id: promotion.id,
+    skuId: promotion.skuId,
+    promotionType: promotion.promotionType,
+    promotionTypeLabel:
+      PROMOTION_TYPE_LABELS[promotion.promotionType] ?? promotion.promotionType,
+    name: promotion.name,
+    amount: promotion.amount,
+    currency: promotion.currency,
+    discountRate: promotion.discountRate,
+    minimumSpend: promotion.minimumSpend,
+    startTime: promotion.startTime,
+    endTime: promotion.endTime,
+    description: promotion.description,
+    promotionUrl: promotion.promotionUrl,
+    expired: Boolean(
+      promotion.endTime && promotion.endTime.getTime() < now,
+    ),
+    source: promotion.source,
+    observedAt: promotion.observedAt,
+  };
+}
+
+function promotionDtoKey(promotion: PromotionDto): string {
+  return [
+    promotion.promotionType,
+    promotion.skuId ?? '',
+    promotion.name,
+    promotion.amount ?? '',
+    promotion.currency ?? '',
+    promotion.discountRate ?? '',
+    promotion.minimumSpend ?? '',
+    promotion.startTime ? new Date(promotion.startTime).toISOString() : '',
+    promotion.endTime ? new Date(promotion.endTime).toISOString() : '',
+    promotion.description ?? '',
+  ].join('|');
+}
+
+/** 商品级优惠集合：按优惠内容去重，保留最近一次采集的版本。 */
+function collectPromotions(observations: ObservationDto[]): PromotionDto[] {
+  const byKey = new Map<string, PromotionDto>();
+  for (const observation of observations) {
+    for (const promotion of observation.promotions) {
+      const key = promotionDtoKey(promotion);
+      const current = byKey.get(key);
+      if (
+        !current ||
+        new Date(promotion.observedAt).getTime() >
+          new Date(current.observedAt).getTime()
+      ) {
+        byKey.set(key, promotion);
+      }
+    }
+  }
+  return [...byKey.values()].sort(
+    (a, b) =>
+      Number(a.expired) - Number(b.expired) ||
+      PROMOTION_TYPE_RANK[a.promotionType] -
+        PROMOTION_TYPE_RANK[b.promotionType] ||
+      a.name.localeCompare(b.name),
+  );
+}
+
 function toObservationDto(observation: ProductObservation): ObservationDto {
+  const now = Date.now();
   return {
     id: observation.id,
     provider: observation.provider,
@@ -208,7 +322,11 @@ function toObservationDto(observation: ProductObservation): ObservationDto {
     price: observation.priceData,
     originalPrice: observation.originalPriceData,
     groupPrice: observation.groupPriceData,
+    couponPrice: observation.couponPriceData ?? null,
     wholesalePrice: observation.wholesalePriceData,
+    promotions: (observation.promotions ?? []).map((promotion) =>
+      toPromotionDto(promotion, now),
+    ),
     salesText: observation.salesText,
     rating: observation.rating,
     region: observation.region,
@@ -314,6 +432,7 @@ export function toProductDto(candidate: ProductCandidate): ProductDto {
     price: candidate.priceData,
     groupPrice: candidate.groupPriceData,
     wholesalePrice: candidate.wholesalePriceData,
+    promotions: collectPromotions(observations),
     sourceType: candidate.sourceType,
     collectedAt: candidate.collectedAt,
     effectiveMatchStatus: effectiveMatchStatus(match),
@@ -525,5 +644,6 @@ export function toSearchDetailDto(
     startedAt: run.startedAt,
     completedAt: run.completedAt,
     platforms,
+    priceSummary: buildPriceSummary(candidates),
   };
 }

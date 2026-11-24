@@ -3,6 +3,7 @@ import {
 } from '../../../common/enums';
 import { PriceInfo, SkuOption } from '../../../common/interfaces/price.interface';
 import { nowIso } from '../../../common/utils/date.util';
+import { parsePromotionAmount } from '../../../common/utils/promotion.util';
 import { toHttpUrl } from '../../../common/utils/url.util';
 
 export function asRecord(value: unknown): Record<string, unknown> | null {
@@ -139,11 +140,27 @@ export function mapSkuOptions(value: unknown): SkuOption[] {
       record['price'] ?? record['price_cny'] ?? record['sale_price'],
     );
     const imageUrl = firstUrl(record, ['image_url', 'image', 'pic_url', 'url']);
+    // 券后价只在接口明确返回、且低于该 SKU 现价时采用；否则不展示，避免把券面额当成价格。
+    const couponPrice = parsePromotionAmount(
+      record['coupon_price'] ?? record['couponPrice'] ?? record['price_after_coupon'],
+    );
+    const validCouponPrice =
+      couponPrice !== null && (price === null || couponPrice < price)
+        ? couponPrice
+        : undefined;
+    const couponText = firstString(record, [
+      'coupon_text',
+      'coupon_desc',
+      'coupon_note',
+      'price_note',
+    ]);
     skus.push({
       ...(skuId ? { skuId } : {}),
       name,
       ...(price !== null ? { price } : {}),
       ...(imageUrl ? { imageUrl } : {}),
+      ...(validCouponPrice !== undefined ? { couponPrice: validCouponPrice } : {}),
+      ...(couponText ? { couponText } : {}),
     });
     if (skus.length >= 100) break;
   }

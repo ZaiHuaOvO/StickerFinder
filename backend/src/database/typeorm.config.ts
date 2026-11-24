@@ -7,6 +7,7 @@ import {
   ProductCandidate,
   ProductMatchResult,
   ProductObservation,
+  ProductPromotion,
   SearchRun,
 } from '../entities';
 
@@ -26,11 +27,17 @@ export function buildTypeOrmOptions(config: ConfigService): TypeOrmModuleOptions
   const dbType = (config.get<string>('DB_TYPE') ?? 'mysql').toLowerCase();
   const synchronize = envBool(config.get<string>('DB_SYNCHRONIZE'), true);
   const logging = envBool(config.get<string>('DB_LOGGING'), false);
+  const migrations = [join(__dirname, 'migrations/*{.ts,.js}')];
+  const migrationsRun = envBool(
+    config.get<string>('DB_MIGRATIONS_RUN'),
+    false,
+  );
   const entities = [
     SearchRun,
     PlatformSearchTask,
     ProductCandidate,
     ProductObservation,
+    ProductPromotion,
     ProductMatchResult,
   ];
 
@@ -44,6 +51,8 @@ export function buildTypeOrmOptions(config: ConfigService): TypeOrmModuleOptions
       type: 'better-sqlite3',
       database,
       entities,
+      migrations,
+      migrationsRun,
       synchronize,
       logging,
     };
@@ -58,6 +67,8 @@ export function buildTypeOrmOptions(config: ConfigService): TypeOrmModuleOptions
     database: config.get<string>('DB_DATABASE') ?? 'sticker_finder',
     charset: 'utf8mb4',
     entities,
+    migrations,
+    migrationsRun,
     synchronize,
     logging,
     retryAttempts: 3,

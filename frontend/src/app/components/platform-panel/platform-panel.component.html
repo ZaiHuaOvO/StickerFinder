@@ -22,7 +22,7 @@
         @if (channel.errorMessage) {
           <div class="channel-error">{{ channel.errorMessage }}</div>
         }
-        @if (channel.status === 'WAITING_MANUAL_VERIFICATION') {
+        @if (channel.status === 'WAITING_MANUAL_VERIFICATION' && !readonlyMode()) {
           <div class="channel-verification">
             <p class="verification-hint">{{ verificationHint(channel) }}</p>
             <div class="verification-actions">
@@ -114,7 +114,7 @@
         </header>
         <div class="product-grid">
           @for (product of result().products; track product.id) {
-            <app-product-card [product]="product" (reviewed)="reviewed.emit($event)" />
+            <app-product-card [product]="product" [readonlyMode]="readonlyMode()" (reviewed)="reviewed.emit($event)" />
           }
         </div>
       </section>
@@ -133,7 +133,7 @@
           </ng-template>
           <div class="product-grid">
             @for (product of result().uncertainProducts; track product.id) {
-              <app-product-card [product]="product" (reviewed)="reviewed.emit($event)" />
+              <app-product-card [product]="product" [readonlyMode]="readonlyMode()" (reviewed)="reviewed.emit($event)" />
             }
           </div>
         </nz-collapse-panel>

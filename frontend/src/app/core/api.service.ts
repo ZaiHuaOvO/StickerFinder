@@ -7,6 +7,8 @@ import {
   ProvidersStatusResponse,
   ReviewPayload,
   SearchDetail,
+  SearchHistoryPage,
+  SearchHistoryQuery,
   SearchRunSummary,
   UploadedImage,
   VerificationBrowserInfo,
@@ -44,6 +46,19 @@ export class ApiService {
 
   listSearches(limit = 10): Observable<SearchRunSummary[]> {
     return this.http.get<SearchRunSummary[]>(`${this.base}/searches?limit=${limit}`);
+  }
+
+  listSearchHistory(query: SearchHistoryQuery): Observable<SearchHistoryPage> {
+    const params = new URLSearchParams();
+    params.set('page', String(query.page ?? 1));
+    params.set('pageSize', String(query.pageSize ?? 20));
+    if (query.keyword?.trim()) params.set('keyword', query.keyword.trim());
+    if (query.status) params.set('status', query.status);
+    if (query.startTime) params.set('startTime', query.startTime);
+    if (query.endTime) params.set('endTime', query.endTime);
+    return this.http.get<SearchHistoryPage>(
+      `${this.base}/search-history?${params.toString()}`,
+    );
   }
 
   reviewCandidate(candidateId: string, payload: ReviewPayload): Observable<Product> {

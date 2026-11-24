@@ -7,8 +7,11 @@ import {
   NextAction,
   ObservationSource,
   Platform,
+  PriceComparisonGroup,
   PriceType,
   PriceVerificationStatus,
+  PromotionType,
+  SearchRunStatus,
   SkuVerificationStatus,
   SourceType,
   TaskStatus,
@@ -168,7 +171,76 @@ export const PRICE_TYPE_META: Record<PriceType, string> = {
   FULL_SET: '全套价',
   LOWEST_SKU: '最低 SKU 起售价',
   LISTING: '商品展示价',
+  COUPON_PRICE: '券后价',
   UNKNOWN: '价格含义未知',
+};
+
+export const PROMOTION_TYPE_META: Record<PromotionType, { label: string; tone: string }> = {
+  COUPON: { label: '优惠券', tone: 'red' },
+  SHOP_ACTIVITY: { label: '店铺活动', tone: 'orange' },
+  PLATFORM_ACTIVITY: { label: '平台活动', tone: 'blue' },
+  DISCOUNT: { label: '优惠', tone: 'gold' },
+  OTHER: { label: '优惠', tone: 'default' },
+};
+
+export const RUN_STATUS_META: Record<SearchRunStatus, { label: string; tone: string }> = {
+  PENDING: { label: '排队中', tone: 'default' },
+  RUNNING: { label: '进行中', tone: 'processing' },
+  COMPLETED: { label: '已完成', tone: 'success' },
+  PARTIAL: { label: '部分完成', tone: 'warning' },
+  FAILED: { label: '失败', tone: 'error' },
+  INTERRUPTED: { label: '已中断', tone: 'error' },
+  CANCELLED: { label: '已取消', tone: 'default' },
+  WAITING_MANUAL_VERIFICATION: { label: '等待验证', tone: 'warning' },
+};
+
+export function formatPromotionValue(
+  amount: number | null,
+  currency: string | null,
+  discountRate: number | null,
+  minimumSpend: number | null,
+): string {
+  const parts: string[] = [];
+  if (minimumSpend !== null) {
+    parts.push(`满${formatMoney(minimumSpend, currency)}`);
+  }
+  if (amount !== null) {
+    parts.push(`减${formatMoney(amount, currency)}`);
+  } else if (discountRate !== null) {
+    parts.push(`${(discountRate * 10).toFixed(1)}折`);
+  }
+  return parts.join(' ');
+}
+
+export function formatMoney(amount: number, currency: string | null): string {
+  const value = amount.toFixed(2);
+  if (currency === 'CNY') return `¥${value}`;
+  if (currency) return `${currency} ${value}`;
+  return `¥${value}`;
+}
+
+export function formatPromotionPeriod(
+  start: string | null,
+  end: string | null,
+): string | null {
+  if (!start && !end) return null;
+  const short = (value: string): string => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
+      date.getDate(),
+    ).padStart(2, '0')}`;
+  };
+  if (start && end) return `${short(start)} 至 ${short(end)}`;
+  if (end) return `${short(end)} 截止`;
+  return `${short(start!)} 起`;
+}
+
+export const PRICE_GROUP_LABEL: Record<PriceComparisonGroup, string> = {
+  TARGET_SINGLE: '目标单款',
+  TARGET_BUNDLE: '组合装',
+  TARGET_FULL_SET: '全系列',
+  WHOLESALE: '批发采购',
 };
 
 export const SOURCE_TYPE_META: Record<SourceType, string> = {

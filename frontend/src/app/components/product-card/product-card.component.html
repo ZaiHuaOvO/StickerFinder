@@ -13,20 +13,12 @@
       @if (isWholesale()) {
         <span class="wholesale-badge">批发采购</span>
       }
-      @if (matchTypeInfo(); as info) {
-        <span class="type-badge">{{ info.label }}</span>
-      }
     </div>
   </div>
 
   <div class="product-card__body">
     <div class="meta-line">
       <nz-tag [nzColor]="tagColor(plainStatus().tone)">{{ plainStatus().label }}</nz-tag>
-      <div class="source-tags">
-        @for (label of sourceTags(); track label) {
-          <nz-tag>{{ label }}</nz-tag>
-        }
-      </div>
       @if (manualLabel(); as label) {
         <nz-tag nzColor="gold">{{ label }}</nz-tag>
       }
@@ -40,6 +32,73 @@
     </h3>
 
     <div class="shop-line">{{ supplierLabel() }}：{{ product().shopName || '未获取' }}</div>
+
+    <div class="price-highlight">
+      <div class="price-highlight__value">{{ highlightPrice() }}</div>
+      <div class="price-highlight__sku">{{ highlightSku() }}</div>
+      @if (highlightNote(); as note) {
+        <div class="price-highlight__note">{{ note }}</div>
+      }
+      @if (couponPriceText(); as coupon) {
+        <div class="coupon-price">券后价 <strong>{{ coupon }}</strong></div>
+      }
+    </div>
+
+    @if (promotionRows().length) {
+      <div class="promotion-block">
+        <div class="promotion-head">优惠信息</div>
+        @for (row of visiblePromotions(); track row.id) {
+          <div class="promotion-row" [class.promotion-row--expired]="row.expired">
+            <nz-tag [nzColor]="row.tone">{{ row.typeLabel }}</nz-tag>
+            <span class="promotion-name">{{ row.name }}</span>
+            @if (row.valueText) {
+              <span class="promotion-value">{{ row.valueText }}</span>
+            }
+            @if (row.skuName) {
+              <span class="promotion-sku">{{ row.skuName }}</span>
+            }
+            @if (row.expired) {
+              <nz-tag>已过期</nz-tag>
+            }
+            @if (row.periodText) {
+              <span class="promotion-period">{{ row.periodText }}</span>
+            }
+            @if (row.description) {
+              <span class="promotion-desc">{{ row.description }}</span>
+            }
+          </div>
+        }
+        @if (morePromotions().length) {
+          <details class="promotion-more">
+            <summary>更多优惠 {{ morePromotions().length }} 条</summary>
+            @for (row of morePromotions(); track row.id) {
+              <div class="promotion-row" [class.promotion-row--expired]="row.expired">
+                <nz-tag [nzColor]="row.tone">{{ row.typeLabel }}</nz-tag>
+                <span class="promotion-name">{{ row.name }}</span>
+                @if (row.valueText) {
+                  <span class="promotion-value">{{ row.valueText }}</span>
+                }
+                @if (row.skuName) {
+                  <span class="promotion-sku">{{ row.skuName }}</span>
+                }
+                @if (row.expired) {
+                  <nz-tag>已过期</nz-tag>
+                }
+                @if (row.periodText) {
+                  <span class="promotion-period">{{ row.periodText }}</span>
+                }
+                @if (row.description) {
+                  <span class="promotion-desc">{{ row.description }}</span>
+                }
+              </div>
+            }
+          </details>
+        }
+      </div>
+    }
+
+    <details class="more-info">
+      <summary>更多信息</summary>
 
     <p class="content-summary">{{ summary() }}</p>
 
@@ -60,12 +119,15 @@
             @if (entry.sku.price !== undefined) {
               <span class="sku-price">¥{{ entry.sku.price.toFixed(2) }}</span>
             }
+            @if (entry.sku.couponPrice !== undefined) {
+              <span class="sku-coupon">券后 ¥{{ entry.sku.couponPrice.toFixed(2) }}</span>
+            }
           </div>
         }
       </div>
     }
 
-    @if (product().skuOptions.length > 1) {
+    @if (product().skuOptions.length > 1 && !readonlyMode()) {
       <details class="sku-review">
         <summary>SKU 人工判断</summary>
         @for (row of skuReviewViews(); track row.skuId) {
@@ -304,6 +366,8 @@
       </div>
     }
 
+    </details>
+
     <div class="card-actions">
       <a
         nz-button
@@ -315,36 +379,38 @@
       >
         查看商品
       </a>
-      <button
-        nz-button
-        nzType="primary"
-        nzSize="small"
-        type="button"
-        [nzLoading]="reviewing()"
-        (click)="quickReview('MATCH')"
-      >
-        确认同款
-      </button>
-      <button
-        nz-button
-        nzDanger
-        nzSize="small"
-        type="button"
-        [nzLoading]="reviewing()"
-        (click)="quickReview('NO_MATCH')"
-      >
-        排除
-      </button>
-      @if (manualLabel()) {
+      @if (!readonlyMode()) {
         <button
           nz-button
+          nzType="primary"
           nzSize="small"
           type="button"
           [nzLoading]="reviewing()"
-          (click)="quickReview('PENDING')"
+          (click)="quickReview('MATCH')"
         >
-          撤销
+          确认同款
         </button>
+        <button
+          nz-button
+          nzDanger
+          nzSize="small"
+          type="button"
+          [nzLoading]="reviewing()"
+          (click)="quickReview('NO_MATCH')"
+        >
+          排除
+        </button>
+        @if (manualLabel()) {
+          <button
+            nz-button
+            nzSize="small"
+            type="button"
+            [nzLoading]="reviewing()"
+            (click)="quickReview('PENDING')"
+          >
+            撤销
+          </button>
+        }
       }
     </div>
   </div>

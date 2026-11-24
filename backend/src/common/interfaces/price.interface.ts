@@ -26,4 +26,8 @@ export interface SkuOption {
   name: string;
   price?: number;
   imageUrl?: string;
+  /** 接口明确返回的该 SKU 券后价；没有返回时为 undefined，不推算 */
+  couponPrice?: number;
+  /** 接口返回的 SKU 优惠说明原文 */
+  couponText?: string;
 }

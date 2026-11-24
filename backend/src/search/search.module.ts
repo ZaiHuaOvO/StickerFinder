@@ -7,11 +7,14 @@ import {
   ProductCandidate,
   ProductMatchResult,
   ProductObservation,
+  ProductPromotion,
   SearchRun,
 } from '../entities';
 import { ProvidersModule } from '../providers/providers.module';
 import { CandidateAggregationService } from './candidate-aggregation.service';
 import { SearchController } from './search.controller';
+import { SearchHistoryController } from './search-history.controller';
+import { SearchHistoryService } from './search-history.service';
 import { SearchOrchestratorService } from './search-orchestrator.service';
 import { SearchService } from './search.service';
 
@@ -22,13 +25,19 @@ import { SearchService } from './search.service';
       PlatformSearchTask,
       ProductCandidate,
       ProductObservation,
+      ProductPromotion,
       ProductMatchResult,
     ]),
     ProvidersModule,
     AiModule,
     BrowserModule,
   ],
-  controllers: [SearchController],
-  providers: [SearchService, SearchOrchestratorService, CandidateAggregationService],
+  controllers: [SearchController, SearchHistoryController],
+  providers: [
+    SearchService,
+    SearchOrchestratorService,
+    CandidateAggregationService,
+    SearchHistoryService,
+  ],
 })
 export class SearchModule {}

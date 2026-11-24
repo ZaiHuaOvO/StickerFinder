@@ -1,0 +1,59 @@
+<section class="price-summary">
+  <div class="best-card">
+    <div class="best-kicker">当前最低已确认价格</div>
+    @if (best(); as item) {
+      <div class="best-amount">{{ formatAmount(item.amount, item.currency) }}</div>
+      <div class="best-title">{{ item.title }}</div>
+      <div class="best-meta">
+        {{ platformLabel(item.platform) }} · {{ item.shopName || '店铺未知' }}
+      </div>
+      <div class="best-sku">{{ groupLabel(item.comparisonGroup) }}：{{ item.skuName }}</div>
+      <a
+        nz-button
+        nzType="primary"
+        nzSize="small"
+        [href]="item.productUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        查看商品
+      </a>
+    } @else {
+      <div class="best-empty">暂未找到可核实的商品价格</div>
+      @if (summary()?.unverifiedMatchCount) {
+        <div class="best-hint">已找到商品，目标规格价格待核实</div>
+      }
+      <button nz-button nzSize="small" type="button" (click)="showUncertain.emit()">
+        查看待确认
+      </button>
+    }
+    @if (searching()) {
+      <div class="best-hint">仍有平台未完成，最低价可能变化</div>
+    }
+    @if (summary()?.unverifiedMatchCount) {
+      <div class="best-hint">
+        另有 {{ summary()!.unverifiedMatchCount }} 个匹配商品未取得目标规格价格
+      </div>
+    }
+  </div>
+
+  <div class="platform-grid">
+    @for (card of platformCards(); track card.platform) {
+      <div class="platform-card">
+        <div class="platform-name">{{ card.label }}</div>
+        <div class="platform-price">{{ card.priceText }}</div>
+        <div class="platform-note">{{ card.note }}</div>
+      </div>
+    }
+  </div>
+
+  @if (groupBest().length) {
+    <div class="group-row">
+      @for (item of groupBest(); track item.comparisonGroup) {
+        <span class="group-chip">
+          {{ groupLabel(item.comparisonGroup) }} {{ formatAmount(item.amount, item.currency) }}
+        </span>
+      }
+    </div>
+  }
+</section>

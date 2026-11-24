@@ -6,6 +6,7 @@ import {
   Index,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryColumn,
 } from 'typeorm';
 import {
@@ -17,6 +18,7 @@ import { PriceInfo, SkuOption } from '../common/interfaces/price.interface';
 import { WholesalePriceInfo } from '../common/interfaces/wholesale-price.interface';
 import { PlatformSearchTask } from './platform-search-task.entity';
 import { ProductCandidate } from './product-candidate.entity';
+import { ProductPromotion } from './product-promotion.entity';
 import { SearchRun } from './search-run.entity';
 
 /**
@@ -78,6 +80,10 @@ export class ProductObservation {
   @Column({ name: 'group_price_data', type: 'simple-json', nullable: true })
   groupPriceData: PriceInfo | null = null;
 
+  /** 接口明确返回的券后价，与商品展示价、SKU 价分开保存 */
+  @Column({ name: 'coupon_price_data', type: 'simple-json', nullable: true })
+  couponPriceData: PriceInfo | null = null;
+
   /** 1688 等批发平台的采购价格，独立于零售 priceData */
   @Column({ name: 'wholesale_price_data', type: 'simple-json', nullable: true })
   wholesalePriceData: WholesalePriceInfo | null = null;
@@ -126,4 +132,7 @@ export class ProductObservation {
   })
   @JoinColumn({ name: 'provider_task_id' })
   providerTask: PlatformSearchTask | null;
+
+  @OneToMany(() => ProductPromotion, (promotion) => promotion.observation)
+  promotions: ProductPromotion[];
 }

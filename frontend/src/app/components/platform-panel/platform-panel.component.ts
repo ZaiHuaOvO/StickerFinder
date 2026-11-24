@@ -38,6 +38,7 @@ export class PlatformPanelComponent {
   readonly result = input.required<PlatformResult>();
   readonly searchId = input.required<string>();
   readonly busyTaskId = input<string | null>(null);
+  readonly readonlyMode = input(false);
   readonly reviewed = output<Product>();
   readonly verification = output<VerificationActionEvent>();
 

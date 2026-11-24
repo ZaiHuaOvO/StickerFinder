@@ -249,6 +249,44 @@
   font-size: 12px;
 }
 
+.price-highlight {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 0 8px;
+}
+
+.price-highlight__value {
+  color: var(--accent);
+  font-size: 27px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.12;
+}
+
+.price-highlight__sku {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.price-highlight__note {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.more-info {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+
+.more-info > summary {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
 .content-summary {
   margin: 0;
   padding: 10px 12px;
@@ -646,4 +684,71 @@
 .card-actions a,
 .card-actions button {
   border-radius: 999px;
+}
+
+.coupon-price {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #c0392b;
+}
+
+.promotion-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft, #faf7f1);
+}
+
+.promotion-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.promotion-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.promotion-row--expired {
+  opacity: 0.55;
+}
+
+.promotion-name {
+  font-weight: 500;
+}
+
+.promotion-value {
+  color: #c0392b;
+  font-weight: 600;
+}
+
+.promotion-sku,
+.promotion-period {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.promotion-desc {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.promotion-more summary {
+  font-size: 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.sku-coupon {
+  font-size: 11px;
+  color: #c0392b;
 }

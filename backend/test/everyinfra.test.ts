@@ -288,6 +288,17 @@ describe('EveryInfra config limits', () => {
     assert.equal(config.detailConcurrency, 2);
   });
 
+  it('uses a longer timeout for 1688 search', () => {
+    const config = new EveryInfraConfig(configService({}));
+    assert.equal(config.timeoutMsFor('taobao'), 30000);
+    assert.equal(config.timeoutMsFor('alibaba1688'), 60000);
+
+    const custom = new EveryInfraConfig(
+      configService({ EVERYINFRA_1688_TIMEOUT_MS: '75000' }),
+    );
+    assert.equal(custom.timeoutMsFor('alibaba1688'), 75000);
+  });
+
   it('reports disabled platforms without calling them', () => {
     const config = new EveryInfraConfig(
       configService({ EVERYINFRA_TAOBAO_ENABLED: 'false' }),

@@ -216,7 +216,7 @@ export class EveryInfraClient {
         url,
         { platform, action, params },
         {
-          timeout: this.config.timeoutMs,
+          timeout: this.config.timeoutMsFor(platform),
           headers: {
             Authorization: `Bearer ${this.config.apiKey}`,
             'Content-Type': 'application/json',

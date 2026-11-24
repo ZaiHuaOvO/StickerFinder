@@ -1,0 +1,104 @@
+.price-summary {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0 6px;
+}
+
+.best-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 18px 20px;
+  background: linear-gradient(135deg, #fff8ec, #fffdf8);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+
+.best-kicker {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.best-amount {
+  color: var(--accent);
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.best-title {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.best-meta,
+.best-sku,
+.best-hint {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.best-empty {
+  color: var(--ink-soft);
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.platform-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.platform-card {
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fffdf9;
+}
+
+.platform-name {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.platform-price {
+  margin-top: 3px;
+  color: var(--accent);
+  font-size: 18px;
+  font-weight: 750;
+}
+
+.platform-note {
+  margin-top: 2px;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+
+.group-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.group-chip {
+  padding: 3px 9px;
+  color: var(--ink-soft);
+  background: var(--amber-soft);
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+@media (max-width: 640px) {
+  .best-card {
+    padding: 14px 16px;
+  }
+
+  .best-amount {
+    font-size: 28px;
+  }
+}

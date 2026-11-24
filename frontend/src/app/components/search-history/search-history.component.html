@@ -1,0 +1,97 @@
+<section class="history">
+  <header class="history-head">
+    <h2>历史记录</h2>
+    <button nz-button nzType="text" type="button" (click)="close.emit()">
+      返回搜索
+    </button>
+  </header>
+
+  <div class="history-filters">
+    <input
+      class="filter-input"
+      placeholder="关键词"
+      [(ngModel)]="keyword"
+      (keyup.enter)="applyFilters()"
+      maxlength="200"
+    />
+    <select class="filter-input" [(ngModel)]="status">
+      <option value="">全部状态</option>
+      @for (option of statusOptions; track option.value) {
+        <option [value]="option.value">{{ option.label }}</option>
+      }
+    </select>
+    <input class="filter-input" type="date" [(ngModel)]="startTime" />
+    <span class="filter-sep">至</span>
+    <input class="filter-input" type="date" [(ngModel)]="endTime" />
+    <button nz-button type="button" (click)="applyFilters()">筛选</button>
+    <button nz-button nzType="text" type="button" (click)="resetFilters()">重置</button>
+  </div>
+
+  @if (error(); as err) {
+    <nz-alert nzType="error" nzShowIcon [nzMessage]="err" />
+  }
+
+  @if (loading()) {
+    <div class="history-loading">
+      <nz-spin nzSimple></nz-spin>
+    </div>
+  } @else if (items().length === 0) {
+    <nz-empty nzNotFoundContent="暂无记录"></nz-empty>
+  } @else {
+    <div class="history-list">
+      @for (item of items(); track item.searchId) {
+        <article class="history-row">
+          <div class="history-main">
+            <div class="history-title">{{ item.keyword }}</div>
+            @if (item.seriesName) {
+              <span class="history-series">{{ item.seriesName }}</span>
+            }
+            <div class="history-meta">
+              <span>{{ format(item.startedAt) }}</span>
+              @for (platform of item.platforms; track platform) {
+                <nz-tag>{{ platformLabel(platform) }}</nz-tag>
+              }
+            </div>
+          </div>
+          <div class="history-stats">
+            <nz-tag [nzColor]="statusTone(item.status)">{{ statusLabel(item.status) }}</nz-tag>
+            <span>{{ item.productCount }} 个商品</span>
+            <span>{{ item.matchedCount }} 个匹配</span>
+          </div>
+          <button
+            nz-button
+            nzType="primary"
+            nzSize="small"
+            type="button"
+            (click)="openDetail.emit(item.searchId)"
+          >
+            查看
+          </button>
+        </article>
+      }
+    </div>
+
+    <div class="history-pager">
+      <button
+        nz-button
+        nzSize="small"
+        type="button"
+        [disabled]="page() <= 1 || loading()"
+        (click)="go(page() - 1)"
+      >
+        上一页
+      </button>
+      <span>{{ page() }} / {{ totalPages() }}</span>
+      <button
+        nz-button
+        nzSize="small"
+        type="button"
+        [disabled]="page() >= totalPages() || loading()"
+        (click)="go(page() + 1)"
+      >
+        下一页
+      </button>
+      <span class="history-total">共 {{ total() }} 条</span>
+    </div>
+  }
+</section>

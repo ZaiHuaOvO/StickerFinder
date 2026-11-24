@@ -108,7 +108,7 @@ export class SearchService {
 
     const candidates = await this.candidateRepo.find({
       where: { searchRunId: id },
-      relations: { matchResult: true, observations: true },
+      relations: { matchResult: true, observations: { promotions: true } },
       order: { collectedAt: 'ASC' },
     });
 
@@ -273,7 +273,7 @@ export class SearchService {
   async reviewCandidate(candidateId: string, dto: ReviewCandidateDto) {
     const candidate = await this.candidateRepo.findOne({
       where: { id: candidateId },
-      relations: { matchResult: true, observations: true },
+      relations: { matchResult: true, observations: { promotions: true } },
     });
     if (!candidate) {
       throw new NotFoundException('候选商品不存在');

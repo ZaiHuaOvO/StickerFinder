@@ -60,6 +60,8 @@ export enum PriceTypeEnum {
   FULL_SET = 'FULL_SET',
   LOWEST_SKU = 'LOWEST_SKU',
   LISTING = 'LISTING',
+  /** 接口明确返回的券后价，不参与与其他优惠的叠加计算 */
+  COUPON_PRICE = 'COUPON_PRICE',
   UNKNOWN = 'UNKNOWN',
 }
 
@@ -67,6 +69,8 @@ export enum SearchRunStatusEnum {
   PENDING = 'PENDING',
   RUNNING = 'RUNNING',
   COMPLETED = 'COMPLETED',
+  /** 部分平台成功、部分平台失败或被拦截 */
+  PARTIAL = 'PARTIAL',
   FAILED = 'FAILED',
   INTERRUPTED = 'INTERRUPTED',
   CANCELLED = 'CANCELLED',
@@ -172,6 +176,15 @@ export enum AiStatusEnum {
   OK = 'OK',
   FAILED = 'FAILED',
   SKIPPED = 'SKIPPED',
+}
+
+/** 优惠活动类型。只按接口明确返回的类型归类，不根据标题猜测。 */
+export enum PromotionTypeEnum {
+  COUPON = 'COUPON',
+  SHOP_ACTIVITY = 'SHOP_ACTIVITY',
+  PLATFORM_ACTIVITY = 'PLATFORM_ACTIVITY',
+  DISCOUNT = 'DISCOUNT',
+  OTHER = 'OTHER',
 }
 
 /** 目标 SKU 的核验状态，与商品匹配状态分离 */

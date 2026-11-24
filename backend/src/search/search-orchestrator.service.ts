@@ -42,6 +42,7 @@ import {
   manualVerificationFailMessage,
 } from '../common/utils/manual-verification.util';
 import { parseSourceMode } from '../common/utils/source-mode.util';
+import { computeRunOutcome } from '../common/utils/run-status.util';
 import { normalizeProductUrl } from '../common/utils/url.util';
 import { envInt } from '../database/typeorm.config';
 import { PlatformSearchTask, ProductCandidate, SearchRun } from '../entities';
@@ -143,6 +144,7 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
 
     if (
       run.status === SearchRunStatusEnum.COMPLETED ||
+      run.status === SearchRunStatusEnum.PARTIAL ||
       run.status === SearchRunStatusEnum.FAILED ||
       run.status === SearchRunStatusEnum.INTERRUPTED ||
       run.status === SearchRunStatusEnum.CANCELLED
@@ -227,7 +229,12 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
         return;
       }
 
-      run.status = SearchRunStatusEnum.COMPLETED;
+      const finalTasks = await this.taskRepo.find({
+        where: { searchRunId: searchId },
+      });
+      const outcome = computeRunOutcome(finalTasks);
+      run.status = outcome.status;
+      run.errorMessage = outcome.errorMessage;
       run.completedAt = new Date();
       await this.runRepo.save(run);
     } finally {

@@ -39,6 +39,16 @@ export class EveryInfraConfig {
     );
   }
 
+  /** 1688 搜索实测可能需要 30–60 秒，单独给更长超时。 */
+  timeoutMsFor(platform: EveryInfraPlatform): number {
+    if (platform !== 'alibaba1688') return this.timeoutMs;
+    const dedicated = this.config.get<string>('EVERYINFRA_1688_TIMEOUT_MS');
+    if (dedicated !== undefined && dedicated !== '') {
+      return Math.max(1000, envInt(dedicated, 60_000));
+    }
+    return Math.max(this.timeoutMs, 60_000);
+  }
+
   get detailEnabled(): boolean {
     return envBool(this.config.get<string>('EVERYINFRA_DETAIL_ENABLED'), true);
   }

@@ -10,15 +10,16 @@ import {
   CANDIDATE_RELEVANCE_META,
   EVIDENCE_SOURCE_LABEL,
   formatDateTime,
+  formatPromotionPeriod,
+  formatPromotionValue,
   MANUAL_DECISION_LABEL,
   MATCH_ASSESSMENT_META,
-  MATCH_TYPE_META,
   NEXT_ACTION_META,
   PLATFORM_META,
   PRICE_TYPE_META,
   PRICE_VERIFICATION_META,
+  PROMOTION_TYPE_META,
   SKU_VERIFICATION_META,
-  SOURCE_TYPE_META,
   VISUAL_MATCH_META,
 } from '../../core/labels';
 import { Product, ReviewPayload } from '../../core/models';
@@ -36,6 +37,8 @@ import { Product, ReviewPayload } from '../../core/models';
 })
 export class ProductCardComponent {
   readonly product = input.required<Product>();
+  /** 历史详情只读：隐藏人工复核与 SKU 判断操作 */
+  readonly readonlyMode = input(false);
   readonly reviewed = output<Product>();
 
   private readonly api = inject(ApiService);
@@ -50,17 +53,6 @@ export class ProductCardComponent {
   readonly summary = computed(
     () => this.product().match?.summary ?? this.product().description ?? '暂无商品内容摘要',
   );
-  readonly matchTypeInfo = computed(() => {
-    const match = this.product().match;
-    const type = match?.matchType;
-    if (
-      match?.manualDecision === 'MATCH' &&
-      (!type || type === 'NOT_MATCH' || type === 'UNCERTAIN')
-    ) {
-      return { label: '人工确认', description: '人工核对后确认包含目标贴纸' };
-    }
-    return type ? MATCH_TYPE_META[type] : null;
-  });
   readonly plainStatus = computed(() => {
     const match = this.product().match;
     const manual = match?.manualDecision;
@@ -74,18 +66,40 @@ export class ProductCardComponent {
     }
     return { label: '待确认', tone: 'warning' };
   });
-  readonly sourceLabel = computed(() => SOURCE_TYPE_META[this.product().sourceType]);
   readonly observations = computed(() => this.product().observations ?? []);
-  readonly sourceTags = computed(() => {
-    const labels = this.observations()
-      .map((observation) => observation.providerLabel)
-      .filter(Boolean);
-    if (labels.length === 0) return [this.sourceLabel()];
-    return [...new Set(labels)];
-  });
   readonly hasMultipleSources = computed(() => this.observations().length > 1);
   readonly priceConflict = computed(() => Boolean(this.product().priceConflict));
   readonly primaryObservation = computed(() => this.observations()[0] ?? null);
+  readonly couponPrice = computed(() => {
+    const observations = this.observations();
+    for (let index = observations.length - 1; index >= 0; index -= 1) {
+      const price = observations[index].couponPrice;
+      if (price) return price;
+    }
+    return null;
+  });
+  readonly couponPriceText = computed(
+    () => this.couponPrice()?.displayText ?? null,
+  );
+  readonly promotionRows = computed(() =>
+    (this.product().promotions ?? []).map((promotion) => ({
+      ...promotion,
+      typeLabel: PROMOTION_TYPE_META[promotion.promotionType]?.label ?? promotion.promotionTypeLabel,
+      tone: PROMOTION_TYPE_META[promotion.promotionType]?.tone ?? 'default',
+      valueText: formatPromotionValue(
+        promotion.amount,
+        promotion.currency,
+        promotion.discountRate,
+        promotion.minimumSpend,
+      ),
+      periodText: formatPromotionPeriod(promotion.startTime, promotion.endTime),
+      skuName: promotion.skuId
+        ? (this.product().skuOptions.find((sku) => sku.skuId === promotion.skuId)?.name ?? promotion.skuId)
+        : null,
+    })),
+  );
+  readonly visiblePromotions = computed(() => this.promotionRows().slice(0, 2));
+  readonly morePromotions = computed(() => this.promotionRows().slice(2));
   readonly comparisonRows = computed(() =>
     this.observations().map((observation) => ({
       observation,
@@ -182,18 +196,19 @@ export class ProductCardComponent {
     const matchedIds = product.match?.matchedSkuIds ?? [];
     return product.skuOptions
       .map((sku, index) => ({ key: sku.skuId ?? `sku-${index + 1}`, sku }))
-      .filter((entry) => matchedIds.includes(entry.key));
+      .filter((entry) => matchedIds.includes(entry.key))
+      .sort(
+        (a, b) =>
+          (a.sku.price ?? Number.POSITIVE_INFINITY) -
+          (b.sku.price ?? Number.POSITIVE_INFINITY),
+      );
   });
   readonly targetPriceHint = computed(() => {
     const match = this.product().match;
     const priced = this.matchedSkuViews().find(
       (entry) => typeof entry.sku.price === 'number',
     );
-    if (
-      priced &&
-      (match?.priceVerificationStatus === 'VERIFIED' ||
-        match?.priceVerificationStatus === 'PARTIAL')
-    ) {
+    if (priced && match?.priceVerificationStatus === 'VERIFIED') {
       return `${priced.sku.name} · ¥${priced.sku.price!.toFixed(2)}`;
     }
     if (match?.skuVerificationStatus === 'FAILED') return '详情暂不可用';
@@ -273,6 +288,42 @@ export class ProductCardComponent {
     })),
   );
   readonly wholesaleNote = computed(() => this.wholesale()?.note ?? null);
+  readonly highlightPrice = computed(() => {
+    if (this.isWholesale()) return this.wholesaleRangeText();
+    const match = this.product().match;
+    const priced = this.matchedSkuViews().find(
+      (entry) => typeof entry.sku.price === 'number',
+    );
+    if (priced && match?.priceVerificationStatus === 'VERIFIED') {
+      return `¥${priced.sku.price!.toFixed(2)}`;
+    }
+    if (match?.skuVerificationStatus === 'FAILED') return '详情暂不可用';
+    const price = this.priceText();
+    return price && price !== '未获取' ? price : '价格未获取';
+  });
+  readonly highlightSku = computed(() => {
+    if (this.isWholesale()) return `起订 ${this.wholesaleMoqText()}`;
+    const match = this.product().match;
+    const priced = this.matchedSkuViews().find(
+      (entry) => typeof entry.sku.price === 'number',
+    );
+    if (priced && match?.priceVerificationStatus === 'VERIFIED') {
+      return priced.sku.name;
+    }
+    return match?.matchedContents?.[0] || '规格待确认';
+  });
+  readonly highlightNote = computed(() => {
+    if (this.isWholesale()) return '批发价，运费另计';
+    const match = this.product().match;
+    if (match?.priceVerificationStatus === 'VERIFIED') {
+      return '目标规格已核验 · 商品价，运费另计';
+    }
+    if (match?.priceVerificationStatus === 'PARTIAL') {
+      return '部分规格已核验 · 商品价，运费另计';
+    }
+    if (match?.skuVerificationStatus === 'FAILED') return null;
+    return '起售价 · 规格待确认';
+  });
 
   private formatWholesaleAmount(amount: number): string {
     const currency = this.wholesale()?.currency ?? null;
