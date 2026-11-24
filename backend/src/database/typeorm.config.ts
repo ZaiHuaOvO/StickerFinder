@@ -8,6 +8,7 @@ import {
   ProductMatchResult,
   ProductObservation,
   ProductPromotion,
+  ProductRuleResult,
   SearchRun,
 } from '../entities';
 
@@ -38,6 +39,7 @@ export function buildTypeOrmOptions(config: ConfigService): TypeOrmModuleOptions
     ProductCandidate,
     ProductObservation,
     ProductPromotion,
+    ProductRuleResult,
     ProductMatchResult,
   ];
 

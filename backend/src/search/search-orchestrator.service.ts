@@ -2,19 +2,13 @@ import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { TargetDescriptor } from '../ai/product-classifier.service';
 import {
   ALL_PLATFORMS,
-  CandidateRelevanceEnum,
-  MatchAssessmentEnum,
-  MatchStatusEnum,
   PlatformEnum,
   PlatformTaskStatusEnum,
-  PriceVerificationStatusEnum,
   ProviderErrorCodeEnum,
   ProviderKeyEnum,
   SearchRunStatusEnum,
-  SkuVerificationStatusEnum,
   SourceSelectionModeEnum,
 } from '../common/enums';
 import {
@@ -35,7 +29,6 @@ import {
   getChannelDefinition,
 } from '../common/platform-channels';
 import { nowIso } from '../common/utils/date.util';
-import { normalizeTargetText } from '../common/utils/text.util';
 import {
   decideManualVerification,
   isManualResolvableBlock,
@@ -48,10 +41,9 @@ import { envInt } from '../database/typeorm.config';
 import { PlatformSearchTask, ProductCandidate, SearchRun } from '../entities';
 import { EveryInfraConfig } from '../providers/everyinfra/everyinfra.config';
 import { ProviderRegistryService } from '../providers/provider-registry.service';
-import {
-  AiMatchBudget,
-  CandidateAggregationService,
-} from './candidate-aggregation.service';
+import { buildSearchRule } from '../rules/rule.engine';
+import { ProductSearchRule } from '../rules/rule.types';
+import { CandidateAggregationService } from './candidate-aggregation.service';
 
 @Injectable()
 export class SearchOrchestratorService implements OnApplicationBootstrap {
@@ -192,22 +184,20 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
       const tasks = await this.taskRepo.find({ where: { searchRunId: searchId } });
       const options = this.searchOptions();
       const mode = parseSourceMode(this.config.get<string>('DATA_SOURCE_MODE'));
-      const target: TargetDescriptor = {
+      const rule = buildSearchRule({
         name: run.targetName,
         seriesName: run.seriesName,
         aliases: run.aliases ?? [],
         seriesAliases: run.seriesAliases ?? [],
-        brandNames: run.brandNames ?? [],
-        referenceImagePath: run.referenceImage,
-      };
+      });
 
-      // 选中的平台各自独立执行：一个平台的搜索/AI/详情不阻塞其他平台。
+      // 选中的平台各自独立执行：一个平台的搜索/详情不阻塞其他平台。
       const selectedPlatforms = ALL_PLATFORMS.filter((platform) =>
         tasks.some((task) => task.platform === platform),
       );
       const results = await Promise.all(
         selectedPlatforms.map((platform) =>
-          this.runPlatform(run, platform, tasks, target, options, mode),
+          this.runPlatform(run, platform, tasks, rule, options, mode),
         ),
       );
       const waitingForManualVerification = results.some(
@@ -246,7 +236,7 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
     run: SearchRun,
     platform: PlatformEnum,
     allTasks: PlatformSearchTask[],
-    target: TargetDescriptor,
+    rule: ProductSearchRule,
     options: SearchOptions,
     mode: SourceSelectionModeEnum,
   ): Promise<{ paused: boolean }> {
@@ -255,16 +245,6 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
     if (this.isCancelled(run.id)) return { paused: false };
 
     const candidates = await this.aggregation.loadCandidates(run.id, platform);
-    // 同款判断预算按平台独立计算，避免一个平台耗尽全部预算。
-    const aiBudget: AiMatchBudget = {
-      remaining: Math.max(
-        0,
-        envInt(
-          this.config.get<string>('THIRD_PARTY_MAX_AI_MATCHES_PER_PLATFORM'),
-          6,
-        ),
-      ),
-    };
 
     try {
       let paused = false;
@@ -275,11 +255,10 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
         await this.runChannel(
           run,
           task,
-          target,
+          rule,
           options,
           platform,
           candidates,
-          aiBudget,
           allTasks,
         );
         if (task.status === PlatformTaskStatusEnum.WAITING_MANUAL_VERIFICATION) {
@@ -299,41 +278,16 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
           run,
           platform,
           platformTasks,
-          target,
+          rule,
           options,
           candidates,
-          aiBudget,
         );
       }
 
-      // 等待人工验证时不在本平台继续识别；恢复后重新进入本方法。
+      // 等待人工验证时不在本平台继续处理；恢复后重新进入本方法。
       if (paused) return { paused: true };
       if (this.isCancelled(run.id)) return { paused: false };
 
-      try {
-        const classification = await this.aggregation.classifyPending(
-          run.id,
-          platform,
-          target,
-          this.aiClassifyConcurrency(),
-          () => this.isCancelled(run.id),
-        );
-        if (classification.classified > 0 || classification.failed > 0) {
-          this.logger.log(
-            `[${platform}] AI 识别完成：成功 ${classification.classified}，失败 ${classification.failed}`,
-          );
-        }
-      } catch (error) {
-        this.logger.warn(
-          `[${platform}] AI 识别阶段异常：${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-
-      if (this.isCancelled(run.id)) return { paused: false };
-
-      // 详情优先级依赖分类后的 matchResult，必须重新加载候选，不能使用分类前快照。
       const enrichedCandidates = await this.aggregation.loadCandidates(
         run.id,
         platform,
@@ -343,9 +297,10 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
         platform,
         platformTasks,
         enrichedCandidates,
-        target,
+        rule,
       );
-      return { paused: false };    } catch (error) {
+      return { paused: false };
+    } catch (error) {
       // 平台之间互相隔离：一个平台异常不取消其他平台。
       this.logger.error(
         `[${platform}] 平台流程异常：${
@@ -356,24 +311,13 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
     }
   }
 
-  private aiClassifyConcurrency(): number {
-    return Math.min(
-      5,
-      Math.max(
-        1,
-        envInt(this.config.get<string>('AI_CLASSIFY_CONCURRENCY'), 3),
-      ),
-    );
-  }
-
   private async runChannel(
     run: SearchRun,
     task: PlatformSearchTask,
-    target: TargetDescriptor,
+    rule: ProductSearchRule,
     options: SearchOptions,
     platform: PlatformEnum,
     candidates: Awaited<ReturnType<CandidateAggregationService['loadCandidates']>>,
-    aiBudget: AiMatchBudget,
     allTasks: PlatformSearchTask[],
   ): Promise<void> {
     const provider = this.registry.get(task.platform, task.provider);
@@ -434,7 +378,7 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
             product,
             task,
             candidates,
-            aiBudget,
+            rule,
           );
           saved += 1;
         } catch (error) {
@@ -545,10 +489,9 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
     run: SearchRun,
     platform: PlatformEnum,
     platformTasks: PlatformSearchTask[],
-    target: TargetDescriptor,
+    rule: ProductSearchRule,
     options: SearchOptions,
     candidates: Awaited<ReturnType<CandidateAggregationService['loadCandidates']>>,
-    aiBudget: AiMatchBudget,
   ): Promise<boolean> {
     const allTasks = await this.taskRepo.find({
       where: { searchRunId: run.id },
@@ -578,11 +521,10 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
       await this.runChannel(
         run,
         task,
-        target,
+        rule,
         options,
         platform,
         candidates,
-        aiBudget,
         allTasks,
       );
       allTasks.push(task);
@@ -615,59 +557,13 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
     platform: PlatformEnum,
     platformTasks: PlatformSearchTask[],
     candidates: Awaited<ReturnType<CandidateAggregationService['loadCandidates']>>,
-    target: TargetDescriptor,
+    rule: ProductSearchRule,
   ): Promise<void> {
     if (!this.everyInfraConfig.detailEnabled) return;
     const limit = this.everyInfraConfig.detailMaxPerPlatform;
     if (limit <= 0) return;
 
-    const normalizedTokens = [
-      target.name,
-      target.seriesName,
-      ...target.aliases,
-      ...(target.seriesAliases ?? []),
-      ...(target.brandNames ?? []),
-    ]
-      .filter((value): value is string => Boolean(value && value.trim()))
-      .map(normalizeTargetText);
-    const normalize = normalizeTargetText;
-
-    // 优先选择标题/系列/款式证据明确的候选，而不是机械取前 N 条。
-    const ranked = candidates
-      .map((candidate) => {
-        const match = candidate.matchResult;
-        let priority = 0;
-        if (!match) {
-          priority = 0;
-        } else if (
-          match.matchStatus === MatchStatusEnum.NO_MATCH ||
-          match.candidateRelevance === CandidateRelevanceEnum.NONE ||
-          match.categoryMatch === MatchAssessmentEnum.CONFLICT
-        ) {
-          priority = -1;
-        } else {
-          const titleMatchesTarget = normalizedTokens.some((token) =>
-            normalize(candidate.title).includes(token),
-          );
-          if (match.candidateRelevance === CandidateRelevanceEnum.HIGH) {
-            priority =
-              match.targetItemMatch === MatchAssessmentEnum.MATCH ? 3 : 2;
-          } else if (match.candidateRelevance === CandidateRelevanceEnum.MEDIUM) {
-            priority = titleMatchesTarget ? 2 : 1;
-          } else if (match.candidateRelevance === CandidateRelevanceEnum.LOW) {
-            priority = titleMatchesTarget ? 1 : 0;
-          }
-        }
-        return { candidate, priority };
-      })
-      .filter((entry) => entry.priority > 0)
-      .sort(
-        (a, b) =>
-          b.priority - a.priority ||
-          (b.candidate.matchResult?.confidence ?? -1) -
-            (a.candidate.matchResult?.confidence ?? -1),
-      );
-
+    // 只有标题规则命中的候选才请求详情；不命中直接标记 RULE_NO_MATCH，不产生费用。
     const selected: Array<{
       candidate: ProductCandidate;
       task: PlatformSearchTask;
@@ -676,7 +572,11 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
       };
     }> = [];
 
-    for (const { candidate } of ranked) {
+    for (const candidate of candidates) {
+      if (selected.length >= limit) break;
+      const ruleResult = candidate.ruleResult;
+      if (!ruleResult?.titleMatched || ruleResult.detailChecked) continue;
+
       for (const task of platformTasks) {
         if (
           task.status !== PlatformTaskStatusEnum.SUCCESS &&
@@ -706,7 +606,6 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
         });
         break;
       }
-      if (selected.length >= limit) break;
     }
 
     const queue = [...selected];
@@ -716,7 +615,7 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
     );
     await Promise.all(
       Array.from({ length: concurrency }, () =>
-        this.runDetailQueue(queue, searchRunId, target),
+        this.runDetailQueue(queue, searchRunId, rule),
       ),
     );
   }
@@ -730,13 +629,13 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
       };
     }>,
     searchRunId: string,
-    target: TargetDescriptor,
+    rule: ProductSearchRule,
   ): Promise<void> {
     while (queue.length > 0) {
       if (this.isCancelled(searchRunId)) break;
       const entry = queue.shift();
       if (!entry) break;
-      await this.enrichOneDetail(searchRunId, entry, target);
+      await this.enrichOneDetail(searchRunId, entry, rule);
     }
   }
 
@@ -749,7 +648,7 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
         fetchDetail: NonNullable<PlatformProvider['fetchDetail']>;
       };
     },
-    target: TargetDescriptor,
+    rule: ProductSearchRule,
   ): Promise<void> {
     if (this.isCancelled(searchRunId)) return;
     try {
@@ -758,56 +657,31 @@ export class SearchOrchestratorService implements OnApplicationBootstrap {
       );
       this.applyUsageStats(entry.task, detail.usage);
       if (!detail.product) {
-        await this.aggregation.updateVerificationStatus(
-          entry.candidate,
-          SkuVerificationStatusEnum.FAILED,
-          PriceVerificationStatusEnum.UNVERIFIED,
-          `详情暂不可用：${(detail.warnings ?? []).join('；') || '详情接口未返回商品'}`,
+        const message = (detail.warnings ?? []).join('；') || '详情接口未返回商品';
+        await this.aggregation.markDetailFailed(entry.candidate, message);
+        entry.task.note = this.appendNote(
+          entry.task.note,
+          `详情暂不可用（保留候选）：${message}`,
         );
-        if (detail.warnings?.length) {
-          entry.task.note = this.appendNote(
-            entry.task.note,
-            `详情补充：${detail.warnings.join('；')}`,
-          );
-        }
         return;
       }
 
-      await this.aggregation.recordDetail(
+      const observation = await this.aggregation.recordDetail(
         searchRunId,
         entry.task,
         entry.candidate,
         detail.product,
+        rule,
       );
-
-      const hasNewEvidence =
-        (detail.product.skuOptions?.length ?? 0) > 0 ||
-        Boolean(detail.product.description);
-      if (hasNewEvidence) {
-        const outcome = await this.aggregation.reclassifyCandidate(
-          entry.candidate,
-          target,
-        );
-        this.logger.log(
-          `[${entry.task.platform}/${entry.task.provider}] 详情后识别：${outcome.aiStatus} ${outcome.matchStatus}，SKU=${outcome.skuVerificationStatus}，价格=${outcome.priceVerificationStatus}`,
-        );
-      } else {
-        await this.aggregation.updateVerificationStatus(
-          entry.candidate,
-          SkuVerificationStatusEnum.NOT_AVAILABLE,
-          PriceVerificationStatusEnum.UNVERIFIED,
-          '详情接口未返回 SKU 或描述',
-        );
-      }
+      this.logger.log(
+        `[${entry.task.platform}/${entry.task.provider}] 详情规则：${
+          entry.candidate.ruleResult?.status ?? 'UNKNOWN'
+        } 观察=${observation.id}`,
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.aggregation
-        .updateVerificationStatus(
-          entry.candidate,
-          SkuVerificationStatusEnum.FAILED,
-          PriceVerificationStatusEnum.UNVERIFIED,
-          `详情暂不可用：${message}`,
-        )
+        .markDetailFailed(entry.candidate, message)
         .catch(() => undefined);
       entry.task.note = this.appendNote(
         entry.task.note,

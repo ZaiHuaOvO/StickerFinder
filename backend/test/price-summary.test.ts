@@ -2,15 +2,16 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   ManualDecisionEnum,
-  MatchStatusEnum,
   MatchTypeEnum,
   PlatformEnum,
   PriceTypeEnum,
-  PriceVerificationStatusEnum,
-  SkuVerificationStatusEnum,
 } from '../src/common/enums';
 import type { PriceInfo } from '../src/common/interfaces/price.interface';
 import type { ProductCandidate } from '../src/entities';
+import {
+  RulePriceStatusEnum,
+  RuleStatusEnum,
+} from '../src/rules/rule.types';
 import { buildPriceSummary } from '../src/search/price-summary.util';
 
 function price(amount: number, currency = 'CNY'): PriceInfo {
@@ -32,7 +33,7 @@ function candidate(overrides: {
   skuData?: Array<{ skuId?: string; name: string; price?: number }>;
   priceData?: PriceInfo | null;
   wholesalePriceData?: Record<string, unknown> | null;
-  match?: Record<string, unknown>;
+  rule?: Record<string, unknown>;
 }): ProductCandidate {
   return {
     id: overrides.id,
@@ -46,31 +47,29 @@ function candidate(overrides: {
     wholesalePriceData: overrides.wholesalePriceData ?? null,
     collectedAt: new Date('2026-11-24T06:48:18Z'),
     observations: [],
-    matchResult: {
-      matchStatus: MatchStatusEnum.MATCH,
+    ruleResult: {
+      status: RuleStatusEnum.MATCH_CONFIRMED,
+      priceStatus: RulePriceStatusEnum.VALID,
+      titleMatched: true,
+      detailChecked: true,
       matchType: MatchTypeEnum.EXACT_SINGLE,
-      candidateRelevance: 'HIGH',
-      manualDecision: ManualDecisionEnum.PENDING,
       matchedSkuIds: [],
       matchedContents: [],
-      skuVerificationStatus: SkuVerificationStatusEnum.NOT_AVAILABLE,
-      priceVerificationStatus: PriceVerificationStatusEnum.UNVERIFIED,
-      ...overrides.match,
+      manualDecision: ManualDecisionEnum.PENDING,
+      ...overrides.rule,
     },
   } as unknown as ProductCandidate;
 }
 
-describe('buildPriceSummary', () => {
-  it('ranks a verified target SKU price as the best single price', () => {
+describe('buildPriceSummary (rule results)', () => {
+  it('ranks a rule-confirmed target SKU price as the best single price', () => {
     const summary = buildPriceSummary([
       candidate({
         id: 'single-1',
         skuData: [{ skuId: 's1', name: '小镇一角', price: 13.8 }],
-        match: {
-          matchType: MatchTypeEnum.EXACT_SINGLE,
+        rule: {
+          matchType: MatchTypeEnum.TARGET_VARIANT,
           matchedSkuIds: ['s1'],
-          skuVerificationStatus: SkuVerificationStatusEnum.VERIFIED,
-          priceVerificationStatus: PriceVerificationStatusEnum.VERIFIED,
         },
       }),
     ]);
@@ -87,11 +86,9 @@ describe('buildPriceSummary', () => {
           { skuId: 's1', name: '小镇一角', price: 13.8 },
           { skuId: 's2', name: '小镇一角+晨光气泡站', price: 24.9 },
         ],
-        match: {
+        rule: {
           matchType: MatchTypeEnum.TARGET_VARIANT,
           matchedSkuIds: ['s1', 's2'],
-          skuVerificationStatus: SkuVerificationStatusEnum.VERIFIED,
-          priceVerificationStatus: PriceVerificationStatusEnum.VERIFIED,
         },
       }),
     ]);
@@ -103,50 +100,50 @@ describe('buildPriceSummary', () => {
     assert.equal(bundle?.amount, 24.9);
   });
 
-  it('does not rank a match whose SKU or price is not verified', () => {
+  it('does not rank a product whose price is not valid', () => {
     const summary = buildPriceSummary([
       candidate({
-        id: 'unverified-1',
+        id: 'no-price-1',
         skuData: [{ skuId: 's1', name: '小镇一角', price: 13.8 }],
-        match: {
-          matchType: MatchTypeEnum.EXACT_SINGLE,
+        rule: {
+          status: RuleStatusEnum.MATCH_NO_PRICE,
+          priceStatus: RulePriceStatusEnum.AMBIGUOUS,
           matchedSkuIds: ['s1'],
-          skuVerificationStatus: SkuVerificationStatusEnum.VERIFIED,
-          priceVerificationStatus: PriceVerificationStatusEnum.UNVERIFIED,
         },
       }),
     ]);
     assert.equal(summary.bestPrice, null);
     assert.equal(summary.totalConfirmed, 0);
-    assert.equal(summary.unverifiedMatchCount, 1);
   });
 
-  it('shows only uncertain candidates that could beat the confirmed price', () => {
+  it('shows only pending candidates that could beat the confirmed price', () => {
     const summary = buildPriceSummary([
       candidate({
         id: 'confirmed',
         skuData: [{ skuId: 's1', name: '小镇一角', price: 13 }],
-        match: {
-          matchType: MatchTypeEnum.EXACT_SINGLE,
+        rule: {
+          matchType: MatchTypeEnum.TARGET_VARIANT,
           matchedSkuIds: ['s1'],
-          skuVerificationStatus: SkuVerificationStatusEnum.VERIFIED,
-          priceVerificationStatus: PriceVerificationStatusEnum.VERIFIED,
         },
       }),
       candidate({
         id: 'cheaper-uncertain',
         priceData: price(12),
-        match: {
-          matchStatus: MatchStatusEnum.UNCERTAIN,
-          matchType: MatchTypeEnum.EXACT_SINGLE,
+        rule: {
+          status: RuleStatusEnum.PENDING_DETAIL,
+          priceStatus: RulePriceStatusEnum.MISSING,
+          detailChecked: false,
+          matchedSkuIds: [],
         },
       }),
       candidate({
         id: 'expensive-uncertain',
         priceData: price(15),
-        match: {
-          matchStatus: MatchStatusEnum.UNCERTAIN,
-          matchType: MatchTypeEnum.EXACT_SINGLE,
+        rule: {
+          status: RuleStatusEnum.PENDING_DETAIL,
+          priceStatus: RulePriceStatusEnum.MISSING,
+          detailChecked: false,
+          matchedSkuIds: [],
         },
       }),
     ]);
@@ -163,11 +160,9 @@ describe('buildPriceSummary', () => {
           { skuId: 's2', name: '小镇一角+校园生活 2款', price: 31.8 },
           { skuId: 's3', name: '妍莜21.0系列-【 allin 6款 】', price: 76.9 },
         ],
-        match: {
+        rule: {
           matchType: MatchTypeEnum.TARGET_VARIANT,
           matchedSkuIds: ['s1', 's2', 's3'],
-          skuVerificationStatus: SkuVerificationStatusEnum.VERIFIED,
-          priceVerificationStatus: PriceVerificationStatusEnum.VERIFIED,
         },
       }),
     ]);
@@ -186,7 +181,7 @@ describe('buildPriceSummary', () => {
       candidate({
         id: 'wholesale-1',
         platform: PlatformEnum.ALIBABA1688,
-        match: { matchType: MatchTypeEnum.EXACT_SINGLE, matchedSkuIds: [] },
+        rule: { matchType: MatchTypeEnum.EXACT_SINGLE, matchedSkuIds: [] },
         wholesalePriceData: {
           priceMin: 0.8,
           priceMax: 1.2,
@@ -203,21 +198,33 @@ describe('buildPriceSummary', () => {
     assert.equal(summary.platforms[0]?.wholesale?.minOrderQuantity, 100);
   });
 
-  it('lets a manual MATCH with a verified SKU price enter the summary', () => {
+  it('lets a manual MATCH with a valid rule price enter the summary', () => {
     const summary = buildPriceSummary([
       candidate({
         id: 'manual-1',
         skuData: [{ skuId: 's1', name: '小镇一角', price: 12.5 }],
-        match: {
-          matchStatus: MatchStatusEnum.NO_MATCH,
-          matchType: MatchTypeEnum.NOT_MATCH,
+        rule: {
+          status: RuleStatusEnum.NO_MATCH,
           manualDecision: ManualDecisionEnum.MATCH,
           matchedSkuIds: ['s1'],
-          skuVerificationStatus: SkuVerificationStatusEnum.VERIFIED,
-          priceVerificationStatus: PriceVerificationStatusEnum.VERIFIED,
         },
       }),
     ]);
     assert.equal(summary.bestPrice?.amount, 12.5);
+  });
+
+  it('ignores legacy AI match results without a rule result', () => {
+    const legacy = {
+      ...candidate({ id: 'legacy-1' }),
+      ruleResult: undefined,
+      matchResult: {
+        matchStatus: 'MATCH',
+        matchType: MatchTypeEnum.EXACT_SINGLE,
+        manualDecision: ManualDecisionEnum.PENDING,
+        matchedSkuIds: [],
+      },
+    } as unknown as ProductCandidate;
+    const summary = buildPriceSummary([legacy]);
+    assert.equal(summary.totalConfirmed, 0);
   });
 });

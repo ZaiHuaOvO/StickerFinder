@@ -3,11 +3,10 @@ import {
   MatchStatusEnum,
   MatchTypeEnum,
   PlatformEnum,
-  PriceVerificationStatusEnum,
-  SkuVerificationStatusEnum,
 } from '../common/enums';
 import { normalizeTargetText } from '../common/utils/text.util';
 import { ProductCandidate } from '../entities';
+import { RulePriceStatusEnum, RuleStatusEnum } from '../rules/rule.types';
 import {
   PlatformPriceSummaryDto,
   PRICE_GROUP_ORDER,
@@ -26,11 +25,23 @@ const RETAIL_GROUPS: PriceComparisonGroup[] = [
 ];
 
 function effectiveStatus(candidate: ProductCandidate): MatchStatusEnum | null {
-  const match = candidate.matchResult;
-  if (!match) return null;
-  if (match.manualDecision === ManualDecisionEnum.MATCH) return MatchStatusEnum.MATCH;
-  if (match.manualDecision === ManualDecisionEnum.NO_MATCH) return MatchStatusEnum.NO_MATCH;
-  return match.matchStatus;
+  const manual =
+    candidate.ruleResult?.manualDecision ?? candidate.matchResult?.manualDecision;
+  if (manual === ManualDecisionEnum.MATCH) return MatchStatusEnum.MATCH;
+  if (manual === ManualDecisionEnum.NO_MATCH) return MatchStatusEnum.NO_MATCH;
+  switch (candidate.ruleResult?.status) {
+    case RuleStatusEnum.MATCH_CONFIRMED:
+    case RuleStatusEnum.MATCH_NO_PRICE:
+      return candidate.ruleResult.status === RuleStatusEnum.MATCH_CONFIRMED
+        ? MatchStatusEnum.MATCH
+        : MatchStatusEnum.UNCERTAIN;
+    case RuleStatusEnum.NO_MATCH:
+      return MatchStatusEnum.NO_MATCH;
+    case RuleStatusEnum.PENDING_DETAIL:
+      return MatchStatusEnum.UNCERTAIN;
+    default:
+      return null;
+  }
 }
 
 function inferSkuGroup(
@@ -46,19 +57,19 @@ function inferSkuGroup(
 }
 
 function inferUncertainGroup(candidate: ProductCandidate): PriceComparisonGroup | null {
-  const match = candidate.matchResult;
-  if (!match) return null;
-  if (match.matchType === MatchTypeEnum.EXACT_SINGLE) return 'TARGET_SINGLE';
-  if (match.matchType === MatchTypeEnum.CONTAINS_TARGET_BUNDLE) return 'TARGET_BUNDLE';
-  if (match.matchType === MatchTypeEnum.CONTAINS_TARGET_FULL_SET) return 'TARGET_FULL_SET';
-  const matchedIds = match.matchedSkuIds ?? [];
+  const rule = candidate.ruleResult;
+  if (!rule) return null;
+  if (rule.matchType === MatchTypeEnum.EXACT_SINGLE) return 'TARGET_SINGLE';
+  if (rule.matchType === MatchTypeEnum.CONTAINS_TARGET_BUNDLE) return 'TARGET_BUNDLE';
+  if (rule.matchType === MatchTypeEnum.CONTAINS_TARGET_FULL_SET) return 'TARGET_FULL_SET';
+  const matchedIds = rule.matchedSkuIds ?? [];
   const skus = candidate.skuData ?? [];
   const matchedSku = skus.find((sku, index) =>
     matchedIds.includes(sku.skuId ?? `sku-${index + 1}`),
   );
-  if (matchedSku) return inferSkuGroup(match.matchType, matchedSku.name);
-  const content = (match.matchedContents ?? [])[0];
-  if (content) return inferSkuGroup(match.matchType, content);
+  if (matchedSku) return inferSkuGroup(rule.matchType, matchedSku.name);
+  const content = (rule.matchedContents ?? [])[0];
+  if (content) return inferSkuGroup(rule.matchType, content);
   return null;
 }
 
@@ -145,9 +156,9 @@ function bestOfGroup(
 }
 
 function referencePrice(candidate: ProductCandidate): number | null {
-  const match = candidate.matchResult;
-  if (!match) return null;
-  const matchedIds = match.matchedSkuIds ?? [];
+  const rule = candidate.ruleResult;
+  if (!rule) return null;
+  const matchedIds = rule.matchedSkuIds ?? [];
   const skus = candidate.skuData ?? [];
   const prices = skus
     .map((sku, index) => ({
@@ -173,7 +184,9 @@ export function buildPriceSummary(candidates: ProductCandidate[]): PriceSummaryD
   );
 
   for (const candidate of matchedCandidates) {
-    const match = candidate.matchResult!;
+    const rule = candidate.ruleResult;
+    // 历史 AI 判断不作为新规则的判断结果。
+    if (!rule) continue;
     if (candidate.platform === PlatformEnum.ALIBABA1688) {
       const wholesale = candidate.wholesalePriceData;
       const wholesaleAmount = wholesale?.priceMin;
@@ -200,22 +213,17 @@ export function buildPriceSummary(candidates: ProductCandidate[]): PriceSummaryD
       continue;
     }
 
-    if (
-      match.skuVerificationStatus !== SkuVerificationStatusEnum.VERIFIED ||
-      match.priceVerificationStatus !== PriceVerificationStatusEnum.VERIFIED
-    ) {
-      continue;
-    }
+    if (rule.priceStatus !== RulePriceStatusEnum.VALID) continue;
     const currency = currencyOf(candidate);
     if (!currency) continue;
 
-    const matchedIds = match.matchedSkuIds ?? [];
+    const matchedIds = rule.matchedSkuIds ?? [];
     const skus = candidate.skuData ?? [];
     skus.forEach((sku, index) => {
       const skuId = sku.skuId ?? `sku-${index + 1}`;
       if (!matchedIds.includes(skuId)) return;
       if (typeof sku.price !== 'number' || sku.price <= 0) return;
-      const group = inferSkuGroup(match.matchType, sku.name);
+      const group = inferSkuGroup(rule.matchType, sku.name);
       items.push(toItem(candidate, skuId, sku.name, sku.price, currency, group));
     });
   }
@@ -292,12 +300,9 @@ export function buildPriceSummary(candidates: ProductCandidate[]): PriceSummaryD
   );
 
   const reasonableUncertain = candidates.filter((candidate) => {
-    const match = candidate.matchResult;
-    if (!match) return false;
-    if (effectiveStatus(candidate) !== MatchStatusEnum.UNCERTAIN) return false;
-    return (
-      match.candidateRelevance === 'HIGH' || match.candidateRelevance === 'MEDIUM'
-    );
+    const rule = candidate.ruleResult;
+    if (!rule || !rule.titleMatched) return false;
+    return effectiveStatus(candidate) === MatchStatusEnum.UNCERTAIN;
   });
 
   const potential: string[] = [];

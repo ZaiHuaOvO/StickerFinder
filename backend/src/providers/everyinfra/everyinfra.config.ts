@@ -82,6 +82,27 @@ export class EveryInfraConfig {
     );
   }
 
+  /** fixture = 只读本地测试数据；live = 允许真实采集（仍需显式开关） */
+  get searchDataMode(): 'fixture' | 'live' {
+    return (this.config.get<string>('SEARCH_DATA_MODE') ?? 'fixture')
+      .trim()
+      .toLowerCase() === 'live'
+      ? 'live'
+      : 'fixture';
+  }
+
+  get liveProviderRequestsEnabled(): boolean {
+    return envBool(
+      this.config.get<string>('LIVE_PROVIDER_REQUESTS_ENABLED'),
+      false,
+    );
+  }
+
+  /** 真实采集必须同时满足：live 模式 + 显式开关 */
+  get liveRequestsAllowed(): boolean {
+    return this.searchDataMode === 'live' && this.liveProviderRequestsEnabled;
+  }
+
   isPlatformEnabled(platform: EveryInfraPlatform): boolean {
     return envBool(this.config.get<string>(PLATFORM_ENABLE_ENV[platform]), true);
   }

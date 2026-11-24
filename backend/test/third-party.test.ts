@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { sameProductSchema } from '../src/ai/same-product.schema';
 import {
   ObservationSourceEnum,
   PlatformStatusEnum,
@@ -251,28 +250,6 @@ describe('platform status aggregation', () => {
         task(PlatformTaskStatusEnum.CANCELLED),
       ]),
       PlatformStatusEnum.CANCELLED,
-    );
-  });
-});
-
-describe('same-product schema', () => {
-  it('accepts SAME/DIFFERENT/UNCERTAIN and rejects out-of-range confidence', () => {
-    assert.equal(
-      sameProductSchema.parse({
-        verdict: 'SAME',
-        confidence: 0.9,
-        reason: '商品 ID 与标题一致',
-        evidence: ['product_id 相同'],
-      }).verdict,
-      'SAME',
-    );
-    assert.throws(() =>
-      sameProductSchema.parse({
-        verdict: 'SAME',
-        confidence: 1.2,
-        reason: 'x',
-        evidence: [],
-      }),
     );
   });
 });

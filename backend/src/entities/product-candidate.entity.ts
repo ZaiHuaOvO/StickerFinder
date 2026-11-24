@@ -14,6 +14,7 @@ import { PriceInfo, SkuOption } from '../common/interfaces/price.interface';
 import { WholesalePriceInfo } from '../common/interfaces/wholesale-price.interface';
 import { ProductMatchResult } from './product-match-result.entity';
 import { ProductObservation } from './product-observation.entity';
+import { ProductRuleResult } from './product-rule-result.entity';
 import { SearchRun } from './search-run.entity';
 
 @Entity({ name: 'product_candidates' })
@@ -75,6 +76,10 @@ export class ProductCandidate {
 
   @OneToOne(() => ProductMatchResult, (result) => result.candidate)
   matchResult?: ProductMatchResult;
+
+  /** 规则识别结果；历史数据可能只有 matchResult，没有 ruleResult */
+  @OneToOne(() => ProductRuleResult, (result) => result.candidate)
+  ruleResult?: ProductRuleResult;
 
   @OneToMany(() => ProductObservation, (observation) => observation.candidate)
   observations: ProductObservation[];

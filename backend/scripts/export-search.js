@@ -217,13 +217,6 @@ async function main() {
     referenceImageInfo.exportedPath = path.relative(folder, target).replace(/\\/g, '/');
   }
 
-  const promptSource = fs.readFileSync(
-    path.join(__dirname, '../src/ai/prompts/product-classification.prompt.ts'),
-    'utf8',
-  );
-  const promptMatch = promptSource.match(/CLASSIFICATION_SYSTEM_PROMPT = `([\s\S]*?)`;/);
-  const promptVersionMatch = promptSource.match(/PROMPT_VERSION = '([^']+)'/);
-
   const platformResults = [];
   const candidateExports = [];
   let index = 0;
@@ -401,14 +394,9 @@ async function main() {
     },
     configuration: {
       database: 'sqlite',
-      ai: {
-        configured: Boolean(process.env.DEEPSEEK_API_KEY),
-        model: process.env.DEEPSEEK_MODEL || 'deepseek-flash',
-        classifyEnabled: (process.env.AI_CLASSIFY_ENABLED || 'true') !== 'false',
-        visionEnabled: (process.env.AI_VISION_ENABLED || 'false') === 'true',
-        minConfidence: Number(process.env.AI_MIN_CONFIDENCE || '0.65'),
-        promptVersion: promptVersionMatch ? promptVersionMatch[1] : null,
-      },
+      searchMode: process.env.SEARCH_DATA_MODE || 'fixture',
+      liveRequestsEnabled:
+        (process.env.LIVE_PROVIDER_REQUESTS_ENABLED || 'false') === 'true',
       search: {
         maxResultsPerPlatform: Number(process.env.SEARCH_MAX_RESULTS_PER_PLATFORM || '20'),
         maxPages: Number(process.env.SEARCH_MAX_PAGES || '2'),
@@ -427,11 +415,6 @@ async function main() {
           xiaohongshu: fs.existsSync(path.resolve(process.cwd(), process.env.BROWSER_USER_DATA_DIR || '.auth', 'xiaohongshu')),
         },
       },
-    },
-    aiPrompt: {
-      systemPrompt: promptMatch ? promptMatch[1] : null,
-      promptVersion: promptVersionMatch ? promptVersionMatch[1] : null,
-      note: '这是导出时项目中实际使用的 DeepSeek 系统提示词；输出 JSON 字段见提示词末尾。',
     },
     platformResults,
     candidates: candidateExports,

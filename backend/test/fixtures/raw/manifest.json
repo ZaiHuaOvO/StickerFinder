@@ -1,0 +1,157 @@
+{
+  "collectedAt": "2026-11-24T08:56:54.697Z",
+  "finishedAt": "2026-11-24T09:07:25.120Z",
+  "budgetUsd": 0.3,
+  "spentUsd": 0.226614,
+  "stickers": [
+    {
+      "id": "sticker-01",
+      "targetName": "菜食场",
+      "seriesName": "利胜 15.0",
+      "platforms": {
+        "taobao": {
+          "status": "SUCCESS",
+          "parsedCount": 20,
+          "titleMatchCount": 3,
+          "detailCount": 2
+        },
+        "alibaba1688": {
+          "error": "EVERYINFRA_TIMEOUT"
+        },
+        "douyin": {
+          "status": "SUCCESS",
+          "parsedCount": 30,
+          "titleMatchCount": 25,
+          "detailCount": 1
+        },
+        "xiaohongshu": {
+          "status": "SUCCESS",
+          "parsedCount": 20,
+          "titleMatchCount": 6,
+          "detailCount": 1
+        }
+      }
+    },
+    {
+      "id": "sticker-02",
+      "targetName": "琉璃盏",
+      "seriesName": "天空岛 10.0",
+      "platforms": {
+        "taobao": {
+          "status": "SUCCESS",
+          "parsedCount": 20,
+          "titleMatchCount": 0,
+          "detailCount": 0
+        },
+        "alibaba1688": {
+          "error": "EVERYINFRA_TIMEOUT"
+        },
+        "douyin": {
+          "status": "SUCCESS",
+          "parsedCount": 30,
+          "titleMatchCount": 8,
+          "detailCount": 1
+        },
+        "xiaohongshu": {
+          "status": "SUCCESS",
+          "parsedCount": 20,
+          "titleMatchCount": 4,
+          "detailCount": 1
+        }
+      }
+    },
+    {
+      "id": "sticker-03",
+      "targetName": "疯人院",
+      "seriesName": "星眠 9.0",
+      "platforms": {
+        "taobao": {
+          "status": "SUCCESS",
+          "parsedCount": 20,
+          "titleMatchCount": 17,
+          "detailCount": 2
+        },
+        "alibaba1688": {
+          "status": "SUCCESS",
+          "parsedCount": 20,
+          "titleMatchCount": 8,
+          "detailCount": 2
+        },
+        "douyin": {
+          "status": "SUCCESS",
+          "parsedCount": 30,
+          "titleMatchCount": 30,
+          "detailCount": 1
+        },
+        "xiaohongshu": {
+          "status": "SUCCESS",
+          "parsedCount": 20,
+          "titleMatchCount": 10,
+          "detailCount": 1
+        }
+      }
+    },
+    {
+      "id": "sticker-04",
+      "targetName": "非实用之家",
+      "seriesName": "芋泥小盒子 10.0",
+      "platforms": {
+        "taobao": {
+          "status": "SUCCESS",
+          "parsedCount": 20,
+          "titleMatchCount": 5,
+          "detailCount": 2
+        },
+        "alibaba1688": {
+          "status": "SUCCESS",
+          "parsedCount": 20,
+          "titleMatchCount": 0,
+          "detailCount": 0
+        },
+        "douyin": {
+          "status": "SUCCESS",
+          "parsedCount": 30,
+          "titleMatchCount": 0,
+          "detailCount": 0
+        },
+        "xiaohongshu": {
+          "status": "EMPTY",
+          "parsedCount": 0,
+          "titleMatchCount": 0,
+          "detailCount": 0
+        }
+      }
+    },
+    {
+      "id": "sticker-05",
+      "targetName": "雅物书房",
+      "seriesName": "利胜 15.0",
+      "platforms": {
+        "taobao": {
+          "status": "SUCCESS",
+          "parsedCount": 20,
+          "titleMatchCount": 15,
+          "detailCount": 2
+        },
+        "alibaba1688": {
+          "status": "SUCCESS",
+          "parsedCount": 20,
+          "titleMatchCount": 2,
+          "detailCount": 2
+        },
+        "douyin": {
+          "status": "SUCCESS",
+          "parsedCount": 7,
+          "titleMatchCount": 4,
+          "detailCount": 1
+        },
+        "xiaohongshu": {
+          "status": "SUCCESS",
+          "parsedCount": 20,
+          "titleMatchCount": 4,
+          "detailCount": 1
+        }
+      }
+    }
+  ]
+}

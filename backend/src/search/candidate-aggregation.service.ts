@@ -1,52 +1,36 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { Repository } from 'typeorm';
 import {
-  ClassificationOutcome,
-  ProductClassifierService,
-  TargetDescriptor,
-} from '../ai/product-classifier.service';
-import { SameProductDescriptor, SameProductService } from '../ai/same-product.service';
-import {
-  AiStatusEnum,
-  ManualDecisionEnum,
   ObservationSourceEnum,
   PlatformEnum,
-  PriceVerificationStatusEnum,
   ProviderKeyEnum,
-  SkuVerificationStatusEnum,
   SourceTypeEnum,
 } from '../common/enums';
 import { NormalizedProduct } from '../common/interfaces/normalized-product.interface';
 import { SkuOption } from '../common/interfaces/price.interface';
 import { mergeWholesale } from '../common/utils/wholesale.util';
-import {
-  isAmbiguousSameProduct,
-  strongProductMatch,
-  StrongMatchReason,
-  titleSimilarity,
-  imageOverlap,
-} from '../common/utils/product-dedupe.util';
-import { normalizeTargetText } from '../common/utils/text.util';
+import { strongProductMatch, StrongMatchReason } from '../common/utils/product-dedupe.util';
 import { sanitizeRawData } from '../common/utils/sanitize.util';
+import { dedupePromotions } from '../common/utils/promotion.util';
 import {
   PlatformSearchTask,
   ProductCandidate,
-  ProductMatchResult,
   ProductObservation,
   ProductPromotion,
-  SearchRun,
+  ProductRuleResult,
 } from '../entities';
-import { dedupePromotions } from '../common/utils/promotion.util';
-
-export interface AiMatchBudget {
-  remaining: number;
-}
+import { evaluateProductRule } from '../rules/rule.engine';
+import {
+  ProductSearchRule,
+  RuleEvaluation,
+  RulePriceStatusEnum,
+  RuleStatusEnum,
+} from '../rules/rule.types';
 
 export interface IngestResult {
   candidate: ProductCandidate;
   matchReason: string;
-  aiUsed: boolean;
 }
 
 function toDate(value: string | Date): Date {
@@ -54,7 +38,8 @@ function toDate(value: string | Date): Date {
   return Number.isNaN(date.getTime()) ? new Date() : date;
 }
 
-function mergeSkuOptions(existing: SkuOption[], incoming: SkuOption[]): SkuOption[] {  const result = [...existing];
+function mergeSkuOptions(existing: SkuOption[], incoming: SkuOption[]): SkuOption[] {
+  const result = [...existing];
   const keys = new Set(
     existing.map((sku, index) => `${sku.skuId ?? ''}|${sku.name}|${index}`),
   );
@@ -68,11 +53,6 @@ function mergeSkuOptions(existing: SkuOption[], incoming: SkuOption[]): SkuOptio
   return result.slice(0, 100);
 }
 
-/**
- * 详情补充：写入一条独立的详情观察记录，只填补候选缺失字段，
- * 不覆盖搜索结果价格，也不因详情失败影响原结果。
- */
-
 function withSourceKeyword(
   product: NormalizedProduct,
 ): Record<string, unknown> | null {
@@ -82,21 +62,42 @@ function withSourceKeyword(
   return sanitizeRawData(raw) as Record<string, unknown>;
 }
 
+function applyEvaluation(
+  row: ProductRuleResult,
+  evaluation: RuleEvaluation,
+): void {
+  row.status = evaluation.status;
+  row.priceStatus = evaluation.priceStatus;
+  row.titleMatched = evaluation.titleMatched;
+  row.detailChecked = evaluation.detailChecked;
+  row.matchedTargetKeywords = evaluation.matchedTargetKeywords;
+  row.matchedSeriesKeywords = evaluation.matchedSeriesKeywords;
+  row.matchedSkuIds = evaluation.matchedSkuIds;
+  row.matchedContents = evaluation.matchedContents;
+  row.matchType = evaluation.matchType;
+  row.reason = evaluation.reason;
+  row.detailError = evaluation.detailError;
+  row.priceAmount = evaluation.price.amount;
+  row.priceCurrency = evaluation.price.currency;
+  row.priceSource = evaluation.price.source;
+  row.priceSkuId = evaluation.price.skuId;
+  row.priceNote = evaluation.price.note;
+  row.evaluatedAt = new Date();
+}
+
 @Injectable()
 export class CandidateAggregationService {
   private readonly logger = new Logger(CandidateAggregationService.name);
 
   constructor(
-    private readonly classifier: ProductClassifierService,
-    private readonly sameProduct: SameProductService,
     @InjectRepository(ProductCandidate)
     private readonly candidateRepo: Repository<ProductCandidate>,
     @InjectRepository(ProductObservation)
     private readonly observationRepo: Repository<ProductObservation>,
     @InjectRepository(ProductPromotion)
     private readonly promotionRepo: Repository<ProductPromotion>,
-    @InjectRepository(ProductMatchResult)
-    private readonly matchRepo: Repository<ProductMatchResult>,
+    @InjectRepository(ProductRuleResult)
+    private readonly ruleRepo: Repository<ProductRuleResult>,
   ) {}
 
   async loadCandidates(
@@ -105,7 +106,10 @@ export class CandidateAggregationService {
   ): Promise<ProductCandidate[]> {
     const candidates = await this.candidateRepo.find({
       where: { searchRunId, platform },
-      relations: { observations: { promotions: true }, matchResult: true },
+      relations: {
+        observations: { promotions: true },
+        ruleResult: true,
+      },
       order: { collectedAt: 'ASC' },
     });
     for (const candidate of candidates) {
@@ -120,12 +124,11 @@ export class CandidateAggregationService {
     product: NormalizedProduct,
     task: PlatformSearchTask,
     candidates: ProductCandidate[],
-    aiBudget: AiMatchBudget,
+    rule: ProductSearchRule,
   ): Promise<IngestResult> {
     const providerKey = product.providerKey ?? ProviderKeyEnum.PLAYWRIGHT;
     let matched: ProductCandidate | undefined;
-    let matchReason: StrongMatchReason | 'ai_same_product' | 'new' = null;
-    let aiUsed = false;
+    let matchReason: StrongMatchReason = null;
 
     for (const candidate of candidates) {
       const reason = strongProductMatch(product, candidate);
@@ -141,39 +144,6 @@ export class CandidateAggregationService {
       }
     }
 
-    if (!matched && this.sameProduct.isConfigured() && aiBudget.remaining > 0) {
-      const ambiguous = candidates
-        .filter((candidate) => this.isCrossProvider(candidate, providerKey))
-        .map((candidate) => ({
-          candidate,
-          score: Math.max(
-            titleSimilarity(product.title, candidate.title),
-            imageOverlap(product.imageUrls, candidate.imageUrls ?? []),
-          ),
-        }))
-        .filter(({ candidate }) => isAmbiguousSameProduct(product, candidate))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 3);
-
-      for (const { candidate } of ambiguous) {
-        if (aiBudget.remaining <= 0) break;
-        aiBudget.remaining -= 1;
-        aiUsed = true;
-        const outcome = await this.sameProduct.compare(
-          this.descriptorFromProduct(product),
-          this.descriptorFromCandidate(candidate),
-        );
-        this.logger.log(
-          `同款判断 candidate=${candidate.id} provider=${providerKey} verdict=${outcome.verdict} confidence=${outcome.confidence}`,
-        );
-        if (outcome.isSame) {
-          matched = candidate;
-          matchReason = 'ai_same_product';
-          break;
-        }
-      }
-    }
-
     if (!matched) {
       const candidate = await this.createCandidate(searchRunId, platform, product);
       candidates.push(candidate);
@@ -185,7 +155,8 @@ export class CandidateAggregationService {
         'new',
       );
       candidate.observations = [...(candidate.observations ?? []), observation];
-      return { candidate, matchReason: 'new', aiUsed };
+      candidate.ruleResult = await this.updateTitleRule(candidate, product, rule);
+      return { candidate, matchReason: 'new' };
     }
 
     await this.mergeCandidate(matched, product);
@@ -197,251 +168,152 @@ export class CandidateAggregationService {
       matchReason ?? 'new',
     );
     matched.observations = [...(matched.observations ?? []), observation];
-    return { candidate: matched, matchReason: matchReason ?? 'new', aiUsed };
-  }
-
-  async classifyPending(
-    searchRunId: string,
-    platform: PlatformEnum,
-    target: TargetDescriptor,
-    concurrency = 1,
-    shouldStop?: () => boolean,
-  ): Promise<{ classified: number; failed: number }> {
-    const candidates = (
-      await this.loadCandidates(searchRunId, platform)
-    ).filter((candidate) => !candidate.matchResult);
-    let classified = 0;
-    let failed = 0;
-    let cursor = 0;
-    const referenceCases = await this.loadReferenceCases(
-      searchRunId,
-      target,
-      platform,
-    );
-    const workerCount = Math.min(
-      Math.max(1, concurrency),
-      Math.max(1, candidates.length),
-    );
-
-    const worker = async (): Promise<void> => {
-      while (true) {
-        if (shouldStop?.()) break;
-        const index = cursor;
-        cursor += 1;
-        if (index >= candidates.length) break;
-        const candidate = candidates[index];
-        try {
-          const representative = this.representativeProduct(candidate);
-          const outcome = await this.classifier.classify(
-            target,
-            representative,
-            candidate.id,
-            { referenceCases },
-          );
-          const match = this.matchRepo.create({ candidateId: candidate.id });
-          this.applyOutcomeToMatch(match, outcome);
-          await this.applyHistoricalManualDecision(candidate, match);
-          await this.matchRepo.save(match);
-          candidate.matchResult = match;
-          classified += 1;
-        } catch (error) {
-          failed += 1;
-          this.logger.warn(
-            `候选商品识别保存失败 candidate=${candidate.id}：${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        }
-      }
-    };
-
-    await Promise.all(Array.from({ length: workerCount }, () => worker()));
-    return { classified, failed };
+    matched.ruleResult = await this.updateTitleRule(matched, product, rule);
+    return { candidate: matched, matchReason: matchReason ?? 'new' };
   }
 
   /**
-   * 详情补充后重新识别：用包含详情 SKU/描述的候选再次调用 AI，
-   * 并更新已有 matchResult，不新建重复记录。
+   * 第一阶段规则：标题必须同时命中目标与系列。
+   * 已通过详情确认的记录不会被后续渠道的标题结果降级。
    */
-  async reclassifyCandidate(
+  private async updateTitleRule(
     candidate: ProductCandidate,
-    target: TargetDescriptor,
-  ): Promise<ClassificationOutcome> {
-    const representative = this.representativeProduct(candidate);
-    const outcome = await this.classifier.classify(
-      target,
-      representative,
-      candidate.id,
-      { detailEnriched: true },
-    );
-
-    let match = candidate.matchResult;
-    if (!match) {
-      match = this.matchRepo.create({ candidateId: candidate.id });
-      candidate.matchResult = match;
+    product: NormalizedProduct,
+    rule: ProductSearchRule,
+  ): Promise<ProductRuleResult> {
+    let row = await this.ruleRepo.findOne({
+      where: { candidateId: candidate.id },
+    });
+    if (!row) {
+      row = this.ruleRepo.create({
+        candidateId: candidate.id,
+        evaluatedAt: new Date(),
+      });
     }
+    if (row.detailChecked) return row;
 
-    if (outcome.aiStatus !== AiStatusEnum.OK) {
-      // 二次识别失败时保留第一次的有效结论，只记录警告和核验失败。
-      match.safetyWarnings = [
-        ...(match.safetyWarnings ?? []),
-        `详情补充后的 SKU 识别失败：${outcome.error ?? '未知错误'}`,
-      ];
-      match.skuVerificationStatus = SkuVerificationStatusEnum.FAILED;
-      await this.matchRepo.save(match);
-      return outcome;
-    }
-
-    this.applyOutcomeToMatch(match, outcome);
-    await this.applyHistoricalManualDecision(candidate, match);
-    await this.matchRepo.save(match);
-    return outcome;
-  }
-
-  /**
-   * 完全相同商品（平台 ID、标题、SKU 与主图未变化）可以复用历史人工判断；
-   * 店铺不同或内容变化时不自动继承。
-   */
-  private async applyHistoricalManualDecision(
-    candidate: ProductCandidate,
-    match: ProductMatchResult,
-  ): Promise<void> {
-    if (match.manualDecision !== ManualDecisionEnum.PENDING) return;
-    if (!candidate.platformProductId) return;
-
-    const previousCandidates = await this.candidateRepo.find({
-      where: {
-        platform: candidate.platform,
-        platformProductId: candidate.platformProductId,
+    const evaluation = evaluateProductRule({
+      rule,
+      searchProduct: {
+        title: product.title,
+        price: product.price,
+        skuOptions: product.skuOptions,
+        wholesalePrice: product.wholesalePrice,
       },
-      relations: { matchResult: true },
-      order: { collectedAt: 'DESC' },
-      take: 10,
+      detail: { attempted: false, product: null },
     });
-    const currentSkus = JSON.stringify(candidate.skuData ?? []);
-    const currentImages = JSON.stringify(candidate.imageUrls ?? []);
-    const reusable = previousCandidates.find((item) => {
-      if (item.id === candidate.id) return false;
-      if (!item.matchResult) return false;
-      if (item.matchResult.manualDecision === ManualDecisionEnum.PENDING) return false;
-      if (normalizeTargetText(item.title) !== normalizeTargetText(candidate.title)) {
-        return false;
-      }
-      if (JSON.stringify(item.skuData ?? []) !== currentSkus) return false;
-      if (JSON.stringify(item.imageUrls ?? []) !== currentImages) return false;
-      return true;
-    });
-    if (!reusable?.matchResult) return;
 
-    match.manualDecision = reusable.matchResult.manualDecision;
-    match.manualNote =
-      [reusable.matchResult.manualNote, '复用历史人工确认']
-        .filter(Boolean)
-        .join('；') || null;
-    match.manualSkuDecisions = reusable.matchResult.manualSkuDecisions ?? null;
-    match.reviewedAt = new Date();
+    // 已经标题命中时不因另一个渠道的标题差异而回退。
+    if (row.titleMatched && !evaluation.titleMatched) return row;
+    applyEvaluation(row, evaluation);
+    return this.ruleRepo.save(row);
   }
 
-  /** 取同一目标/系列的历史人工确认，作为 AI 的辅助参考（最多 2 条）。 */
-  private async loadReferenceCases(
+  /** 详情返回后执行第二阶段确认与价格有效性检查。 */
+  async recordDetail(
     searchRunId: string,
-    target: TargetDescriptor,
-    platform: PlatformEnum,
-  ): Promise<
-    Array<{
-      title: string;
-      platform: string;
-      manualDecision: string;
-      note?: string | null;
-    }>
-  > {
-    const runRepo = this.candidateRepo.manager.getRepository(SearchRun);
-    const runs = await runRepo.find({
-      order: { startedAt: 'DESC' },
-      take: 50,
-    });
-    const targetName = normalizeTargetText(target.name);
-    const targetSeries = normalizeTargetText(target.seriesName ?? '');
-    const runIds = runs
-      .filter(
-        (run) =>
-          run.id !== searchRunId &&
-          normalizeTargetText(run.targetName) === targetName &&
-          normalizeTargetText(run.seriesName ?? '') === targetSeries,
-      )
-      .map((run) => run.id);
-    if (runIds.length === 0) return [];
-
-    const candidates = await this.candidateRepo.find({
-      where: { platform, searchRunId: In(runIds) },
-      relations: { matchResult: true },
-      order: { collectedAt: 'DESC' },
-      take: 10,
-    });
-    return candidates
-      .filter(
-        (candidate) =>
-          candidate.matchResult &&
-          candidate.matchResult.manualDecision !== ManualDecisionEnum.PENDING,
-      )
-      .slice(0, 2)
-      .map((candidate) => ({
-        title: candidate.title,
-        platform: candidate.platform,
-        manualDecision: candidate.matchResult!.manualDecision,
-        note: candidate.matchResult!.manualNote,
-      }));
-  }
-
-  /** 详情失败或未返回 SKU 时更新核验状态，不覆盖已有匹配结论。 */
-  async updateVerificationStatus(
+    task: PlatformSearchTask,
     candidate: ProductCandidate,
-    skuStatus: SkuVerificationStatusEnum,
-    priceStatus: PriceVerificationStatusEnum,
-    warning?: string,
+    product: NormalizedProduct,
+    rule: ProductSearchRule,
+  ): Promise<ProductObservation> {
+    await this.mergeCandidate(candidate, product, true);
+    const observation = await this.createObservation(
+      searchRunId,
+      task,
+      candidate,
+      product,
+      'detail_enrichment',
+    );
+    candidate.observations = [...(candidate.observations ?? []), observation];
+    candidate.ruleResult = await this.evaluateDetail(
+      candidate,
+      product,
+      rule,
+      null,
+    );
+    return observation;
+  }
+
+  async markDetailFailed(
+    candidate: ProductCandidate,
+    message: string,
   ): Promise<void> {
-    const match = candidate.matchResult;
-    if (!match) return;
-    match.skuVerificationStatus = skuStatus;
-    match.priceVerificationStatus = priceStatus;
-    if (warning) {
-      match.safetyWarnings = [...(match.safetyWarnings ?? []), warning];
+    let row = await this.ruleRepo.findOne({
+      where: { candidateId: candidate.id },
+    });
+    if (!row) {
+      row = this.ruleRepo.create({
+        candidateId: candidate.id,
+        evaluatedAt: new Date(),
+      });
     }
-    await this.matchRepo.save(match);
+    row.status = RuleStatusEnum.PENDING_DETAIL;
+    row.priceStatus = RulePriceStatusEnum.MISSING;
+    row.detailChecked = false;
+    row.detailError = message;
+    row.reason = `详情获取失败，保留候选：${message}`;
+    row.evaluatedAt = new Date();
+    candidate.ruleResult = await this.ruleRepo.save(row);
   }
 
-  private applyOutcomeToMatch(
-    match: ProductMatchResult,
-    outcome: ClassificationOutcome,
-  ): void {    match.matchStatus = outcome.matchStatus;
-    match.matchType = outcome.matchType;
-    match.candidateRelevance = outcome.candidateRelevance;
-    match.categoryMatch = outcome.categoryMatch;
-    match.seriesMatch = outcome.seriesMatch;
-    match.targetItemMatch = outcome.targetItemMatch;
-    match.visualMatch = outcome.visualMatch;
-    match.confidence = outcome.confidence;
-    match.summary = outcome.summary;
-    match.reason = outcome.reason;
-    match.matchedContents = outcome.matchedContents;
-    match.matchedSkuIds = outcome.matchedSkuIds;
-    match.skuDecisions = outcome.skuDecisions;
-    match.evidence = outcome.evidence;
-    match.nextAction = outcome.nextAction;
-    match.rawMatchStatus = outcome.rawMatchStatus;
-    match.rawConfidence = outcome.rawConfidence;
-    match.safetyWarnings = outcome.safetyWarnings;
-    match.safetyBlockers = outcome.safetyBlockers;
-    match.skuVerificationStatus = outcome.skuVerificationStatus;
-    match.priceVerificationStatus = outcome.priceVerificationStatus;
-    match.aiStatus = outcome.aiStatus;
-    match.aiModel = outcome.model;
-    match.aiRawResponse = outcome.rawResponse;
-    match.aiError = outcome.error;
-    match.needsManualReview = outcome.needsManualReview;
-    match.classifiedAt = new Date();
+  /** 供 DTO/回归测试复用的纯规则评估。 */
+  evaluateCandidate(
+    candidate: ProductCandidate,
+    detail: NormalizedProduct | null,
+    rule: ProductSearchRule,
+    detailError: string | null = null,
+  ): RuleEvaluation {
+    return evaluateProductRule({
+      rule,
+      searchProduct: {
+        title: candidate.title,
+        price: candidate.priceData,
+        skuOptions: candidate.skuData,
+        wholesalePrice: candidate.wholesalePriceData,
+      },
+      detail: {
+        attempted: true,
+        product: detail,
+        error: detailError,
+      },
+    });
   }
 
+  private async evaluateDetail(
+    candidate: ProductCandidate,
+    detail: NormalizedProduct | null,
+    rule: ProductSearchRule,
+    error: string | null,
+  ): Promise<ProductRuleResult> {
+    let row = await this.ruleRepo.findOne({
+      where: { candidateId: candidate.id },
+    });
+    if (!row) {
+      row = this.ruleRepo.create({
+        candidateId: candidate.id,
+        evaluatedAt: new Date(),
+      });
+    }
+    const evaluation = evaluateProductRule({
+      rule,
+      searchProduct: {
+        title: candidate.title,
+        price: candidate.priceData,
+        skuOptions: candidate.skuData,
+        wholesalePrice: candidate.wholesalePriceData,
+      },
+      detail: {
+        attempted: true,
+        product: detail,
+        error,
+      },
+    });
+    applyEvaluation(row, evaluation);
+    return this.ruleRepo.save(row);
+  }
+
+  /** 历史搜索没有规则结果时，按当前规则重新评估（只读回放使用）。 */
   private async createCandidate(
     searchRunId: string,
     platform: PlatformEnum,
@@ -494,7 +366,8 @@ export class CandidateAggregationService {
     const rawData = withSourceKeyword(product);
     if (!candidate.rawData && rawData) {
       candidate.rawData = rawData;
-    }    candidate.imageUrls = [
+    }
+    candidate.imageUrls = [
       ...new Set([
         ...(candidate.imageUrls ?? []),
         ...(product.imageUrls ?? []),
@@ -564,7 +437,7 @@ export class CandidateAggregationService {
 
   /**
    * 优惠信息跟随观察记录保存；同一次采集内的重复条目去重，
-   * 不同采集时间由不同观察记录各自保留。保存失败会向上抛出，不能静默丢数据。
+   * 不同采集时间由不同观察记录各自保留。
    */
   private async savePromotions(
     observation: ProductObservation,
@@ -596,28 +469,6 @@ export class CandidateAggregationService {
       }),
     );
     return this.promotionRepo.save(rows);
-  }
-
-  /**
-   * 详情补充：写入一条独立的详情观察记录，只填补候选缺失字段，
-   * 不覆盖搜索结果价格，也不因详情失败影响原结果。
-   */
-  async recordDetail(
-    searchRunId: string,
-    task: PlatformSearchTask,
-    candidate: ProductCandidate,
-    product: NormalizedProduct,
-  ): Promise<ProductObservation> {
-    await this.mergeCandidate(candidate, product, true);
-    const observation = await this.createObservation(
-      searchRunId,
-      task,
-      candidate,
-      product,
-      'detail_enrichment',
-    );
-    candidate.observations = [...(candidate.observations ?? []), observation];
-    return observation;
   }
 
   representative(candidate: ProductCandidate): NormalizedProduct {
@@ -669,41 +520,6 @@ export class CandidateAggregationService {
   ): boolean {
     const providers = new Set((candidate.observations ?? []).map((obs) => obs.provider));
     return providers.size === 0 || !providers.has(providerKey);
-  }
-
-  private descriptorFromProduct(product: NormalizedProduct): SameProductDescriptor {
-    return {
-      platform: product.platform,
-      provider: product.providerKey ?? 'unknown',
-      title: product.title,
-      shopName: product.shopName ?? null,
-      productUrl: product.productUrl,
-      platformProductId: product.platformProductId ?? null,
-      imageUrls: product.imageUrls ?? [],
-      skuOptions: (product.skuOptions ?? []).slice(0, 20).map((sku) => ({
-        name: sku.name,
-        price: sku.price,
-      })),
-      description: product.description ?? null,
-    };
-  }
-
-  private descriptorFromCandidate(candidate: ProductCandidate): SameProductDescriptor {
-    const observation = (candidate.observations ?? [])[0];
-    return {
-      platform: candidate.platform,
-      provider: observation?.provider ?? 'unknown',
-      title: candidate.title,
-      shopName: candidate.shopName,
-      productUrl: candidate.productUrl,
-      platformProductId: candidate.platformProductId,
-      imageUrls: candidate.imageUrls ?? [],
-      skuOptions: (candidate.skuData ?? []).slice(0, 20).map((sku) => ({
-        name: sku.name,
-        price: sku.price,
-      })),
-      description: candidate.description,
-    };
   }
 
   private sourceFromProviderType(

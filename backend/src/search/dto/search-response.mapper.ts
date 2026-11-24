@@ -1,18 +1,13 @@
 import {
-  CandidateRelevanceEnum,
   ManualDecisionEnum,
-  MatchAssessmentEnum,
   MatchStatusEnum,
-  NextActionEnum,
+  MatchTypeEnum,
   ObservationSourceEnum,
   PlatformEnum,
   PlatformStatusEnum,
   PlatformTaskStatusEnum,
-  PriceVerificationStatusEnum,
   PromotionTypeEnum,
-  SkuVerificationStatusEnum,
   SourceTypeEnum,
-  VisualMatchEnum,
 } from '../../common/enums';
 import { PriceInfo, SkuOption } from '../../common/interfaces/price.interface';
 import { WholesalePriceInfo } from '../../common/interfaces/wholesale-price.interface';
@@ -24,11 +19,7 @@ import {
 import { aggregatePlatformStatus } from '../../common/utils/platform-status.util';
 import { buildPriceSummary } from '../price-summary.util';
 import type { PriceSummaryDto } from './price-summary.dto';
-import type {
-  EvidenceEntry,
-  SkuDecision,
-  SkuManualDecision,
-} from '../../entities/product-match-result.entity';
+import type { SkuManualDecision } from '../../entities/product-match-result.entity';
 import {
   PlatformSearchTask,
   ProductCandidate,
@@ -36,37 +27,35 @@ import {
   ProductPromotion,
   SearchRun,
 } from '../../entities';
+import { RulePriceStatusEnum, RuleStatusEnum } from '../../rules/rule.types';
 
-export interface MatchDto {
-  aiStatus: string;
-  matchStatus: MatchStatusEnum;
-  matchType: string | null;
-  candidateRelevance: CandidateRelevanceEnum | null;
-  categoryMatch: MatchAssessmentEnum | null;
-  seriesMatch: MatchAssessmentEnum | null;
-  targetItemMatch: MatchAssessmentEnum | null;
-  visualMatch: VisualMatchEnum | null;
-  confidence: number | null;
-  summary: string | null;
-  reason: string | null;
-  matchedContents: string[];
+export interface RuleDto {
+  status: RuleStatusEnum;
+  priceStatus: RulePriceStatusEnum;
+  titleMatched: boolean;
+  detailChecked: boolean;
+  matchedTargetKeywords: string[];
+  matchedSeriesKeywords: string[];
   matchedSkuIds: string[];
-  skuDecisions: SkuDecision[];
-  evidence: EvidenceEntry[];
-  nextAction: NextActionEnum | null;
-  rawMatchStatus: MatchStatusEnum | null;
-  rawConfidence: number | null;
-  safetyWarnings: string[];
-  safetyBlockers: string[];
-  skuVerificationStatus: SkuVerificationStatusEnum;
-  priceVerificationStatus: PriceVerificationStatusEnum;
-  needsManualReview: boolean;
-  manualDecision: ManualDecisionEnum;
-  manualNote: string | null;
-  manualSkuDecisions: SkuManualDecision[];
+  matchedContents: string[];
+  matchType: MatchTypeEnum | null;
+  reason: string | null;
+  detailError: string | null;
+  price: {
+    amount: number | null;
+    currency: string | null;
+    skuId: string | null;
+    source: string | null;
+    note: string | null;
+  };
+  evaluatedAt: Date | null;
+}
+
+export interface ManualReviewDto {
+  decision: ManualDecisionEnum;
+  note: string | null;
+  skuDecisions: SkuManualDecision[];
   reviewedAt: Date | null;
-  aiModel: string | null;
-  aiError: string | null;
 }
 
 export interface PromotionDto {
@@ -135,8 +124,11 @@ export interface ProductDto {
   promotions: PromotionDto[];
   sourceType: string;
   collectedAt: Date;
-  effectiveMatchStatus: MatchStatusEnum;
-  match: MatchDto | null;
+  effectiveRuleStatus: MatchStatusEnum;
+  /** 规则识别结果；历史数据可能为 null */
+  rule: RuleDto | null;
+  /** 人工复核；历史数据可能来自旧 AI 记录的 manual 字段 */
+  manual: ManualReviewDto | null;
   observations: ObservationDto[];
   priceConflict: boolean;
 }
@@ -198,6 +190,9 @@ export interface SearchDetailDto {
   errorMessage: string | null;
   startedAt: Date;
   completedAt: Date | null;
+  /** live = 实际采集；fixture = 本地历史数据回放 */
+  dataSource: 'live' | 'fixture';
+  replay: boolean;
   platforms: PlatformResultDto[];
   priceSummary: PriceSummaryDto;
 }
@@ -232,11 +227,40 @@ function sourceLabel(source: string): string {
   return SOURCE_LABELS[source] ?? source;
 }
 
-export function effectiveMatchStatus(match: MatchDto | null): MatchStatusEnum {
-  if (!match) return MatchStatusEnum.UNCERTAIN;
-  if (match.manualDecision === ManualDecisionEnum.MATCH) return MatchStatusEnum.MATCH;
-  if (match.manualDecision === ManualDecisionEnum.NO_MATCH) return MatchStatusEnum.NO_MATCH;
-  return match.matchStatus;
+/** 人工判断优先于规则结果；历史数据没有规则结果时视为待确认。 */
+export function effectiveRuleStatus(candidate: ProductCandidate): MatchStatusEnum {
+  const manual =
+    candidate.ruleResult?.manualDecision ?? candidate.matchResult?.manualDecision;
+  if (manual === ManualDecisionEnum.MATCH) return MatchStatusEnum.MATCH;
+  if (manual === ManualDecisionEnum.NO_MATCH) return MatchStatusEnum.NO_MATCH;
+  const status = candidate.ruleResult?.status;
+  if (status === RuleStatusEnum.MATCH_CONFIRMED) return MatchStatusEnum.MATCH;
+  if (status === RuleStatusEnum.NO_MATCH) return MatchStatusEnum.NO_MATCH;
+  return MatchStatusEnum.UNCERTAIN;
+}
+
+function toRuleDto(rule: NonNullable<ProductCandidate['ruleResult']>): RuleDto {
+  return {
+    status: rule.status,
+    priceStatus: rule.priceStatus,
+    titleMatched: rule.titleMatched,
+    detailChecked: rule.detailChecked,
+    matchedTargetKeywords: rule.matchedTargetKeywords ?? [],
+    matchedSeriesKeywords: rule.matchedSeriesKeywords ?? [],
+    matchedSkuIds: rule.matchedSkuIds ?? [],
+    matchedContents: rule.matchedContents ?? [],
+    matchType: rule.matchType,
+    reason: rule.reason,
+    detailError: rule.detailError,
+    price: {
+      amount: rule.priceAmount,
+      currency: rule.priceCurrency,
+      skuId: rule.priceSkuId,
+      source: rule.priceSource,
+      note: rule.priceNote,
+    },
+    evaluatedAt: rule.evaluatedAt,
+  };
 }
 
 function toPromotionDto(
@@ -348,74 +372,41 @@ function hasPriceConflict(observations: ObservationDto[]): boolean {
   return new Set(values).size > 1;
 }
 
-function normalizeEvidence(entries: unknown): EvidenceEntry[] {
-  if (!Array.isArray(entries)) return [];
-  const allowed = new Set(['title', 'description', 'sku', 'image']);
-  const normalized: EvidenceEntry[] = [];
-  for (const entry of entries) {
-    if (typeof entry === 'string' && entry.trim()) {
-      normalized.push({
-        sourceField: 'title',
-        content: entry,
-        interpretation: '历史数据（旧格式）',
-      });
-      continue;
-    }
-    if (entry && typeof entry === 'object') {
-      const record = entry as Record<string, unknown>;
-      if (typeof record.content !== 'string' || !record.content.trim()) continue;
-      if (typeof record.sourceField !== 'string' || !allowed.has(record.sourceField)) {
-        continue;
-      }
-      normalized.push({
-        sourceField: record.sourceField as EvidenceEntry['sourceField'],
-        content: record.content,
-        interpretation:
-          typeof record.interpretation === 'string' ? record.interpretation : '',
-      });
-    }
+function ruleRank(product: ProductDto): number {
+  if (product.manual?.decision === ManualDecisionEnum.MATCH) return 0;
+  if (product.manual?.decision === ManualDecisionEnum.NO_MATCH) return 4;
+  switch (product.rule?.status) {
+    case RuleStatusEnum.MATCH_CONFIRMED:
+      return 0;
+    case RuleStatusEnum.MATCH_NO_PRICE:
+      return 1;
+    case RuleStatusEnum.PENDING_DETAIL:
+      return 2;
+    case RuleStatusEnum.NO_MATCH:
+      return 4;
+    default:
+      return 3;
   }
-  return normalized;
+}
+
+function byRuleThenTime(a: ProductDto, b: ProductDto): number {
+  const byRule = ruleRank(a) - ruleRank(b);
+  if (byRule !== 0) return byRule;
+  return b.collectedAt.getTime() - a.collectedAt.getTime();
 }
 
 export function toProductDto(candidate: ProductCandidate): ProductDto {
-  const result = candidate.matchResult;
   const observations = [...(candidate.observations ?? [])]
     .sort((a, b) => a.observedAt.getTime() - b.observedAt.getTime())
     .map(toObservationDto);
-  const match: MatchDto | null = result
+  const rule = candidate.ruleResult ? toRuleDto(candidate.ruleResult) : null;
+  const manualSource = candidate.ruleResult ?? candidate.matchResult;
+  const manual: ManualReviewDto | null = manualSource
     ? {
-        aiStatus: result.aiStatus,
-        matchStatus: result.matchStatus,
-        matchType: result.matchType,
-        candidateRelevance: result.candidateRelevance,
-        categoryMatch: result.categoryMatch,
-        seriesMatch: result.seriesMatch,
-        targetItemMatch: result.targetItemMatch,
-        visualMatch: result.visualMatch,
-        confidence: result.confidence,
-        summary: result.summary,
-        reason: result.reason,
-        matchedContents: result.matchedContents ?? [],
-        matchedSkuIds: result.matchedSkuIds ?? [],
-        skuDecisions: result.skuDecisions ?? [],
-        evidence: normalizeEvidence(result.evidence),
-        nextAction: result.nextAction,
-        rawMatchStatus: result.rawMatchStatus ?? null,
-        rawConfidence: result.rawConfidence ?? null,
-        safetyWarnings: result.safetyWarnings ?? [],
-        safetyBlockers: result.safetyBlockers ?? [],
-        skuVerificationStatus:
-          result.skuVerificationStatus ?? SkuVerificationStatusEnum.PENDING,
-        priceVerificationStatus:
-          result.priceVerificationStatus ?? PriceVerificationStatusEnum.PENDING,
-        needsManualReview: result.needsManualReview,
-        manualDecision: result.manualDecision,
-        manualNote: result.manualNote,
-        manualSkuDecisions: result.manualSkuDecisions ?? [],
-        reviewedAt: result.reviewedAt,
-        aiModel: result.aiModel,
-        aiError: result.aiError,
+        decision: manualSource.manualDecision,
+        note: manualSource.manualNote,
+        skuDecisions: manualSource.manualSkuDecisions ?? [],
+        reviewedAt: manualSource.reviewedAt,
       }
     : null;
 
@@ -435,8 +426,9 @@ export function toProductDto(candidate: ProductCandidate): ProductDto {
     promotions: collectPromotions(observations),
     sourceType: candidate.sourceType,
     collectedAt: candidate.collectedAt,
-    effectiveMatchStatus: effectiveMatchStatus(match),
-    match,
+    effectiveRuleStatus: effectiveRuleStatus(candidate),
+    rule,
+    manual,
     observations,
     priceConflict: hasPriceConflict(observations),
   };
@@ -486,29 +478,6 @@ function toChannelDto(
   };
 }
 
-function relevanceRank(value: CandidateRelevanceEnum | null | undefined): number {
-  switch (value) {
-    case CandidateRelevanceEnum.HIGH:
-      return 3;
-    case CandidateRelevanceEnum.MEDIUM:
-      return 2;
-    case CandidateRelevanceEnum.LOW:
-      return 1;
-    case CandidateRelevanceEnum.NONE:
-      return 0;
-    default:
-      return -1;
-  }
-}
-
-function byRelevanceThenConfidence(a: ProductDto, b: ProductDto): number {
-  const byRelevance =
-    relevanceRank(b.match?.candidateRelevance) -
-    relevanceRank(a.match?.candidateRelevance);
-  if (byRelevance !== 0) return byRelevance;
-  return (b.match?.confidence ?? -1) - (a.match?.confidence ?? -1);
-}
-
 export function toPlatformResultDto(
   platform: PlatformEnum,
   tasks: PlatformSearchTask[],
@@ -523,16 +492,16 @@ export function toPlatformResultDto(
   });
   const products = candidates
     .map(toProductDto)
-    .sort(byRelevanceThenConfidence);
+    .sort(byRuleThenTime);
 
   const matched = products.filter(
-    (product) => product.effectiveMatchStatus === MatchStatusEnum.MATCH,
+    (product) => product.effectiveRuleStatus === MatchStatusEnum.MATCH,
   );
   const uncertain = products.filter(
-    (product) => product.effectiveMatchStatus === MatchStatusEnum.UNCERTAIN,
+    (product) => product.effectiveRuleStatus === MatchStatusEnum.UNCERTAIN,
   );
   const excluded = products.filter(
-    (product) => product.effectiveMatchStatus === MatchStatusEnum.NO_MATCH,
+    (product) => product.effectiveRuleStatus === MatchStatusEnum.NO_MATCH,
   );
   const channels = orderedTasks.map((task) => toChannelDto(task, manualBrowserOpen));
   const status = aggregatePlatformStatus(tasks);
@@ -643,6 +612,8 @@ export function toSearchDetailDto(
     errorMessage: run.errorMessage,
     startedAt: run.startedAt,
     completedAt: run.completedAt,
+    dataSource: 'live',
+    replay: false,
     platforms,
     priceSummary: buildPriceSummary(candidates),
   };

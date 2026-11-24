@@ -49,6 +49,7 @@ const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 export class SearchFormComponent implements OnDestroy {
   @Input() busy = false;
   readonly statuses = input<ProvidersStatusResponse | null>(null);
+  readonly fixtureMode = input(false);
   @Output() readonly search = new EventEmitter<SearchFormPayload>();
 
   private readonly api = inject(ApiService);
@@ -75,7 +76,9 @@ export class SearchFormComponent implements OnDestroy {
   private readonly manualSelection = signal<Platform[]>([]);
 
   readonly configuredPlatforms = computed<Platform[]>(() =>
-    PLATFORM_ORDER.filter((platform) => this.statuses()?.platforms?.[platform]?.configured),
+    this.fixtureMode()
+      ? [...PLATFORM_ORDER]
+      : PLATFORM_ORDER.filter((platform) => this.statuses()?.platforms?.[platform]?.configured),
   );
   readonly selectedPlatforms = computed<Platform[]>(() =>
     this.selectionTouched() ? this.manualSelection() : this.configuredPlatforms(),
@@ -86,10 +89,11 @@ export class SearchFormComponent implements OnDestroy {
   }
 
   isConfigured(platform: Platform): boolean {
-    return this.statuses()?.platforms?.[platform]?.configured ?? false;
+    return this.fixtureMode() || (this.statuses()?.platforms?.[platform]?.configured ?? false);
   }
 
   platformReason(platform: Platform): string {
+    if (this.fixtureMode()) return '';
     const status = this.statuses()?.platforms?.[platform];
     return status?.configured ? '' : (status?.reason ?? '未配置');
   }

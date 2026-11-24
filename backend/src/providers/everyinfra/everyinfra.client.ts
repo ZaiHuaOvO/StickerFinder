@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import axios, { AxiosResponse } from 'axios';
-import { NotConfiguredError } from '../../common/errors/provider.errors';
+import { NotConfiguredError, ProviderError } from '../../common/errors/provider.errors';
 import { ProviderErrorCodeEnum } from '../../common/enums';
 import { EveryInfraConfig } from './everyinfra.config';
 import { classifyEveryInfraError, EveryInfraError } from './everyinfra-error';
@@ -207,6 +207,12 @@ export class EveryInfraClient {
     params: Record<string, unknown>,
   ): Promise<EveryInfraCallResult> {
     this.ensureConfigured(platform);
+    if (!this.config.liveRequestsAllowed) {
+      throw new ProviderError(
+        ProviderErrorCodeEnum.LIVE_REQUESTS_DISABLED,
+        '当前为本地测试模式或未授权真实采集，已阻止 EveryInfra 请求',
+      );
+    }
 
     const url = `${this.config.baseUrl}/api/v1/social`;
     const startedAt = Date.now();

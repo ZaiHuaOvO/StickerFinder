@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { classificationResultSchema, parseJsonObject } from '../src/ai/ai.schema';
 import {
   PlatformStatusEnum,
   PlatformTaskStatusEnum,
@@ -68,24 +67,6 @@ describe('normalizeProductUrl', () => {
   });
 });
 
-describe('parseJsonObject', () => {
-  it('parses plain JSON', () => {
-    assert.deepEqual(parseJsonObject('{"a":1}'), { a: 1 });
-  });
-
-  it('parses fenced JSON', () => {
-    assert.deepEqual(parseJsonObject('```json\n{"a":1}\n```'), { a: 1 });
-  });
-
-  it('parses JSON surrounded by prose', () => {
-    assert.deepEqual(parseJsonObject('结果如下：{"a":1} 谢谢'), { a: 1 });
-  });
-
-  it('throws for non-JSON text', () => {
-    assert.throws(() => parseJsonObject('not json'));
-  });
-});
-
 describe('parseVisiblePrice', () => {
   it('parses a plain listing price', () => {
     const price = parseVisiblePrice('A系列 B贴纸 ¥9.90', 'test');
@@ -119,67 +100,6 @@ describe('parseVisiblePrice', () => {
     const price = parseVisiblePrice('暂无价格', 'test');
     assert.equal(price.amount, null);
     assert.equal(price.priceType, PriceTypeEnum.UNKNOWN);
-  });
-});
-
-describe('classificationResultSchema', () => {
-  const valid = {
-    matchStatus: 'MATCH',
-    matchType: 'CONTAINS_TARGET_BUNDLE',
-    candidateRelevance: 'HIGH',
-    confidence: 0.96,
-    categoryMatch: 'MATCH',
-    seriesMatch: 'MATCH',
-    targetItemMatch: 'MATCH',
-    visualMatch: 'VISUAL_UNAVAILABLE',
-    productContentSummary: '商品包含 B 和 C',
-    matchedContents: ['B', 'C'],
-    matchedSkuIds: ['sku-2'],
-    skuDecisions: [
-      { skuId: 'sku-2', matchStatus: 'MATCH', reason: 'SKU 名称包含 B+C' },
-    ],
-    evidence: [
-      {
-        sourceField: 'title',
-        content: '标题包含 B+C 组合',
-        interpretation: '标题明确列出组合内容',
-      },
-    ],
-    reason: '商品内容明确包含目标贴纸',
-    nextAction: 'NONE',
-    needsManualReview: false,
-  };
-
-  it('accepts a valid AI result', () => {
-    assert.equal(classificationResultSchema.parse(valid).matchType, 'CONTAINS_TARGET_BUNDLE');
-  });
-
-  it('rejects out-of-range confidence', () => {
-    assert.throws(() => classificationResultSchema.parse({ ...valid, confidence: 1.5 }));
-  });
-
-  it('rejects unknown match type', () => {
-    assert.throws(() =>
-      classificationResultSchema.parse({ ...valid, matchType: 'SOMETHING_ELSE' }),
-    );
-  });
-
-  it('rejects null matchType', () => {
-    assert.throws(() =>
-      classificationResultSchema.parse({ ...valid, matchType: null }),
-    );
-  });
-
-  it('rejects legacy string evidence', () => {
-    assert.throws(() =>
-      classificationResultSchema.parse({ ...valid, evidence: ['标题包含 B+C 组合'] }),
-    );
-  });
-
-  it('rejects unknown candidate relevance', () => {
-    assert.throws(() =>
-      classificationResultSchema.parse({ ...valid, candidateRelevance: 'VERY_HIGH' }),
-    );
   });
 });
 

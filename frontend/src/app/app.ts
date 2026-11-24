@@ -16,7 +16,7 @@ import { SearchHistoryComponent } from './components/search-history/search-histo
 import { ApiService, apiErrorMessage } from './core/api.service';
 import { formatDateTime, PLATFORM_META } from './core/labels';
 import {
-  CandidateRelevance,
+  FixtureSummary,
   Platform,
   PriceComparisonGroup,
   PriceSummaryItem,
@@ -28,27 +28,27 @@ import {
   VerificationActionEvent,
 } from './core/models';
 
-function relevanceRank(value: CandidateRelevance | null | undefined): number {
-  switch (value) {
-    case 'HIGH':
-      return 3;
-    case 'MEDIUM':
-      return 2;
-    case 'LOW':
-      return 1;
-    case 'NONE':
+function effectiveRank(product: Product): number {
+  if (product.manual?.decision === 'MATCH') return 0;
+  if (product.manual?.decision === 'NO_MATCH') return 5;
+  switch (product.rule?.status) {
+    case 'RULE_MATCH_CONFIRMED':
       return 0;
+    case 'RULE_MATCH_NO_PRICE':
+      return 1;
+    case 'RULE_PENDING_DETAIL':
+      return 2;
+    case 'RULE_NO_MATCH':
+      return 5;
     default:
-      return -1;
+      return 3;
   }
 }
 
-function byRelevanceThenConfidence(a: Product, b: Product): number {
-  const byRelevance =
-    relevanceRank(b.match?.candidateRelevance) -
-    relevanceRank(a.match?.candidateRelevance);
-  if (byRelevance !== 0) return byRelevance;
-  return (b.match?.confidence ?? -1) - (a.match?.confidence ?? -1);
+function byRuleThenTime(a: Product, b: Product): number {
+  const byRule = effectiveRank(a) - effectiveRank(b);
+  if (byRule !== 0) return byRule;
+  return b.collectedAt.localeCompare(a.collectedAt);
 }
 
 @Component({
@@ -92,8 +92,19 @@ export class App implements OnInit, OnDestroy {
   /** 历史记录列表 / 历史详情：只读，不轮询、不触发外部采集 */
   readonly historyOpen = signal(false);
   readonly readonlyDetail = signal(false);
+  readonly fixtures = signal<FixtureSummary[]>([]);
+  readonly selectedFixtureId = signal<string>('');
 
-  readonly aiStatus = computed(() => this.statuses()?.ai ?? null);
+  readonly searchMode = computed(() => this.statuses()?.searchMode ?? 'fixture');
+  readonly isFixtureMode = computed(() => this.searchMode() === 'fixture');
+  readonly readonlyView = computed(
+    () => this.readonlyDetail() || Boolean(this.detail()?.replay),
+  );
+  readonly selectedFixture = computed(
+    () =>
+      this.fixtures().find((fixture) => fixture.id === this.selectedFixtureId()) ??
+      null,
+  );
   readonly visiblePlatforms = computed(() =>
     (this.detail()?.platforms ?? []).filter((platform) => platform.channels.length > 0),
   );
@@ -190,7 +201,7 @@ export class App implements OnInit, OnDestroy {
       case 'PENDING':
         return '任务排队中';
       case 'RUNNING':
-        return '正在采集与识别';
+        return '正在采集';
       case 'COMPLETED':
         return '搜索完成';
       case 'PARTIAL':
@@ -219,7 +230,7 @@ export class App implements OnInit, OnDestroy {
   readonly formattedStartedAt = computed(() => formatDateTime(this.detail()?.startedAt));
   readonly formattedCompletedAt = computed(() => formatDateTime(this.detail()?.completedAt));
   readonly canCancel = computed(() => {
-    if (this.readonlyDetail()) return false;
+    if (this.readonlyView()) return false;
     const status = this.detail()?.status;
     return (
       status === 'PENDING' ||
@@ -256,9 +267,34 @@ export class App implements OnInit, OnDestroy {
   loadStatuses(): void {
     this.statusesError.set(null);
     this.api.getProviderStatuses().subscribe({
-      next: (statuses) => this.statuses.set(statuses),
+      next: (statuses) => {
+        this.statuses.set(statuses);
+        if (statuses.searchMode === 'fixture') {
+          void this.loadFixtures();
+        }
+      },
       error: (error: unknown) => this.statusesError.set(apiErrorMessage(error)),
     });
+  }
+
+  private async loadFixtures(): Promise<void> {
+    try {
+      const result = await firstValueFrom(this.api.listFixtures());
+      this.fixtures.set(result.items);
+      if (!this.selectedFixtureId() && result.items.length > 0) {
+        this.selectedFixtureId.set(result.items[0].id);
+      }
+      if (result.items.length === 0) {
+        this.error.set('本地没有可用测试数据；不会自动切换到真实接口。');
+      }
+    } catch (error) {
+      this.error.set(apiErrorMessage(error));
+    }
+  }
+
+  onFixtureChange(event: Event): void {
+    const value = (event.target as HTMLSelectElement).value;
+    this.selectedFixtureId.set(value);
   }
 
   async onSearch(payload: SearchFormPayload): Promise<void> {
@@ -273,6 +309,11 @@ export class App implements OnInit, OnDestroy {
     this.actionNotice.set(null);
     this.detail.set(null);
     this.searching.set(true);
+
+    if (this.isFixtureMode()) {
+      await this.runReplay(payload);
+      return;
+    }
 
     try {
       const created = await firstValueFrom(
@@ -297,6 +338,35 @@ export class App implements OnInit, OnDestroy {
 
   setPlatformFilter(filter: 'ALL' | Platform): void {
     this.platformFilter.set(filter);
+  }
+
+  private async runReplay(payload: SearchFormPayload): Promise<void> {
+    const fixtureId = this.selectedFixtureId();
+    if (!fixtureId) {
+      this.error.set('请先选择本地测试数据；不会自动调用真实接口。');
+      this.searching.set(false);
+      return;
+    }
+    try {
+      const detail = await firstValueFrom(
+        this.api.replaySearch({
+          fixtureId,
+          targetName: payload.targetName,
+          seriesName: payload.seriesName,
+          aliases: payload.aliases,
+          seriesAliases: payload.seriesAliases,
+          brandNames: payload.brandNames,
+          platforms: payload.platforms,
+        }),
+      );
+      this.detail.set(detail);
+      this.platformFilter.set('ALL');
+      this.searching.set(false);
+      this.actionNotice.set('测试模式 · 本地历史数据；外部接口调用 0 次。');
+    } catch (error) {
+      this.error.set(apiErrorMessage(error));
+      this.searching.set(false);
+    }
   }
 
   openHistory(): void {
@@ -382,7 +452,7 @@ export class App implements OnInit, OnDestroy {
   }
 
   private productReferencePrice(product: Product): number {
-    const matchedIds = product.match?.matchedSkuIds ?? [];
+    const matchedIds = product.rule?.matchedSkuIds ?? [];
     for (const [index, sku] of product.skuOptions.entries()) {
       const skuId = sku.skuId ?? `sku-${index + 1}`;
       if (matchedIds.includes(skuId) && typeof sku.price === 'number') {
@@ -555,18 +625,18 @@ export class App implements OnInit, OnDestroy {
       );
       let excludedCount = platform.excludedCount;
 
-      if (updated.effectiveMatchStatus === 'MATCH') {
+      if (updated.effectiveRuleStatus === 'MATCH') {
         products.push(updated);
         if (wasExcluded) excludedCount = Math.max(0, excludedCount - 1);
-      } else if (updated.effectiveMatchStatus === 'UNCERTAIN') {
+      } else if (updated.effectiveRuleStatus === 'UNCERTAIN') {
         uncertainProducts.push(updated);
         if (wasExcluded) excludedCount = Math.max(0, excludedCount - 1);
       } else if (wasVisible) {
         excludedCount += 1;
       }
 
-      products.sort(byRelevanceThenConfidence);
-      uncertainProducts.sort(byRelevanceThenConfidence);
+      products.sort(byRuleThenTime);
+      uncertainProducts.sort(byRuleThenTime);
       return {
         ...platform,
         products,

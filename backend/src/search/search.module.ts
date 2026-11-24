@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
-import { AiModule } from '../ai/ai.module';
 import { BrowserModule } from '../browser/browser.module';
 import {
   PlatformSearchTask,
@@ -8,6 +7,7 @@ import {
   ProductMatchResult,
   ProductObservation,
   ProductPromotion,
+  ProductRuleResult,
   SearchRun,
 } from '../entities';
 import { ProvidersModule } from '../providers/providers.module';
@@ -26,10 +26,10 @@ import { SearchService } from './search.service';
       ProductCandidate,
       ProductObservation,
       ProductPromotion,
+      ProductRuleResult,
       ProductMatchResult,
     ]),
     ProvidersModule,
-    AiModule,
     BrowserModule,
   ],
   controllers: [SearchController, SearchHistoryController],

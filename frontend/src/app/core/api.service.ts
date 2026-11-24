@@ -3,8 +3,10 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import {
   CreateSearchPayload,
+  FixtureListResponse,
   Product,
   ProvidersStatusResponse,
+  ReplayPayload,
   ReviewPayload,
   SearchDetail,
   SearchHistoryPage,
@@ -22,6 +24,14 @@ export class ApiService {
 
   getProviderStatuses(): Observable<ProvidersStatusResponse> {
     return this.http.get<ProvidersStatusResponse>(`${this.base}/providers/status`);
+  }
+
+  listFixtures(): Observable<FixtureListResponse> {
+    return this.http.get<FixtureListResponse>(`${this.base}/replay/fixtures`);
+  }
+
+  replaySearch(payload: ReplayPayload): Observable<SearchDetail> {
+    return this.http.post<SearchDetail>(`${this.base}/replay`, payload);
   }
 
   createSearch(payload: CreateSearchPayload): Observable<{ searchId: string; status: string }> {

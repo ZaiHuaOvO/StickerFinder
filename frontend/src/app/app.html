@@ -19,19 +19,10 @@
         <span nz-icon nzType="history"></span>
         历史记录
       </button>
-      @if (aiStatus(); as ai) {
-        <span
-          class="status-pill"
-          [class.ok]="ai.configured"
-          nz-tooltip
-          [nzTooltipTitle]="ai.reason"
-        >
-          <span class="status-dot"></span>
-          DeepSeek {{ ai.configured ? '已配置' : '未配置' }}
-        </span>
-      } @else {
-        <span class="status-pill"><span class="status-dot"></span> 状态加载中</span>
-      }
+      <span class="status-pill" [class.ok]="isFixtureMode()">
+        <span class="status-dot"></span>
+        {{ isFixtureMode() ? '测试模式 · 本地历史数据' : '在线采集模式' }}
+      </span>
       <button
         nz-button
         nzType="text"
@@ -63,9 +54,32 @@
         (close)="closeHistory()"
       ></app-search-history>
     } @else {
+    @if (isFixtureMode()) {
+      <div class="fixture-bar">
+        <span class="fixture-label">测试数据</span>
+        @if (fixtures().length) {
+          <select
+            class="fixture-select"
+            [value]="selectedFixtureId()"
+            (change)="onFixtureChange($event)"
+          >
+            @for (fixture of fixtures(); track fixture.id) {
+              <option [value]="fixture.id">
+                {{ fixture.targetName }} / {{ fixture.seriesName || '无系列' }}（{{ fixture.platforms.length }} 平台）
+              </option>
+            }
+          </select>
+        } @else {
+          <span class="fixture-note">本地暂无测试数据</span>
+        }
+        <span class="fixture-note">外部接口调用 0 次</span>
+      </div>
+    }
+
     <app-search-form
       [busy]="searching()"
       [statuses]="statuses()"
+      [fixtureMode]="isFixtureMode()"
       (search)="onSearch($event)"
     ></app-search-form>
 
@@ -119,16 +133,13 @@
       />
     }
 
-    @if (aiStatus(); as ai) {
-      @if (!ai.configured) {
-        <nz-alert
-          class="block-gap"
-          nzType="warning"
-          nzShowIcon
-          nzMessage="DeepSeek 未配置"
-          [nzDescription]="ai.reason"
-        />
-      }
+    @if (detail()?.replay) {
+      <nz-alert
+        class="block-gap"
+        nzType="info"
+        nzShowIcon
+        nzMessage="测试模式 · 本地历史数据"
+      />
     }
 
     @if (readonlyDetail()) {
@@ -233,7 +244,7 @@
             @for (product of filteredPricedProducts(); track product.id) {
               <app-product-card
                 [product]="product"
-                [readonlyMode]="readonlyDetail()"
+                [readonlyMode]="readonlyView()"
                 (reviewed)="onReviewed($event)"
               ></app-product-card>
             }
@@ -259,7 +270,7 @@
               @for (product of filteredUnverifiedProducts(); track product.id) {
                 <app-product-card
                   [product]="product"
-                [readonlyMode]="readonlyDetail()"
+                [readonlyMode]="readonlyView()"
                   (reviewed)="onReviewed($event)"
                 ></app-product-card>
               }
@@ -277,7 +288,7 @@
               @for (product of potentialCheaperProducts(); track product.id) {
                 <app-product-card
                   [product]="product"
-                [readonlyMode]="readonlyDetail()"
+                [readonlyMode]="readonlyView()"
                   (reviewed)="onReviewed($event)"
                 ></app-product-card>
               }
@@ -292,7 +303,7 @@
               @for (product of otherUncertainProducts(); track product.id) {
                 <app-product-card
                   [product]="product"
-                [readonlyMode]="readonlyDetail()"
+                [readonlyMode]="readonlyView()"
                   (reviewed)="onReviewed($event)"
                 ></app-product-card>
               }
@@ -320,7 +331,7 @@
                 [result]="result"
                 [searchId]="d.searchId"
                 [busyTaskId]="verificationBusyTaskId()"
-                [readonlyMode]="readonlyDetail()"
+                [readonlyMode]="readonlyView()"
                 (reviewed)="onReviewed($event)"
                 (verification)="onVerificationAction($event)"
               ></app-platform-panel>

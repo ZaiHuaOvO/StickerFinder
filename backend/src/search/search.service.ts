@@ -4,7 +4,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { existsSync } from 'fs';
 import { resolve, sep } from 'path';
 import { Repository } from 'typeorm';
-import { ProductClassifierService } from '../ai/product-classifier.service';
 import { BrowserService } from '../browser/browser.service';
 import {
   ALL_PLATFORMS,
@@ -18,11 +17,17 @@ import {
 import { ProviderError } from '../common/errors/provider.errors';
 import { channelsForMode } from '../common/platform-channels';
 import { parseSourceMode } from '../common/utils/source-mode.util';
+import {
+  assertLiveSearchAllowed,
+  liveRequestsEnabled,
+  parseSearchDataMode,
+} from '../common/utils/search-mode.util';
 import { nowIso } from '../common/utils/date.util';
 import {
   ProductMatchResult,
   PlatformSearchTask,
   ProductCandidate,
+  ProductRuleResult,
   SearchRun,
 } from '../entities';
 import type { SkuManualDecision } from '../entities/product-match-result.entity';
@@ -46,7 +51,6 @@ export class SearchService {
     private readonly orchestrator: SearchOrchestratorService,
     private readonly registry: ProviderRegistryService,
     private readonly everyInfraUsage: EveryInfraUsageService,
-    private readonly classifier: ProductClassifierService,
     private readonly browser: BrowserService,
     @InjectRepository(SearchRun)
     private readonly runRepo: Repository<SearchRun>,
@@ -56,9 +60,12 @@ export class SearchService {
     private readonly candidateRepo: Repository<ProductCandidate>,
     @InjectRepository(ProductMatchResult)
     private readonly matchRepo: Repository<ProductMatchResult>,
+    @InjectRepository(ProductRuleResult)
+    private readonly ruleRepo: Repository<ProductRuleResult>,
   ) {}
 
   async createSearch(dto: CreateSearchDto): Promise<{ searchId: string; status: string }> {
+    assertLiveSearchAllowed(this.config);
     const referenceImage = this.resolveReferenceImage(dto.referenceImageId);
     const aliases = [...new Set((dto.aliases ?? []).map((alias) => alias.trim()).filter(Boolean))];
     const seriesAliases = [
@@ -108,7 +115,11 @@ export class SearchService {
 
     const candidates = await this.candidateRepo.find({
       where: { searchRunId: id },
-      relations: { matchResult: true, observations: { promotions: true } },
+      relations: {
+        matchResult: true,
+        ruleResult: true,
+        observations: { promotions: true },
+      },
       order: { collectedAt: 'ASC' },
     });
 
@@ -198,6 +209,7 @@ export class SearchService {
    * 恢复后由采集渠道重新加载页面并再次检查验证码/登录，不假定人工验证必然成功。
    */
   async resumeVerification(searchId: string, taskId: string) {
+    assertLiveSearchAllowed(this.config);
     const { task, run } = await this.requireWaitingTask(searchId, taskId);
 
     // 同一个用户数据目录不能被两个浏览器进程同时使用。
@@ -273,23 +285,27 @@ export class SearchService {
   async reviewCandidate(candidateId: string, dto: ReviewCandidateDto) {
     const candidate = await this.candidateRepo.findOne({
       where: { id: candidateId },
-      relations: { matchResult: true, observations: { promotions: true } },
+      relations: {
+        matchResult: true,
+        ruleResult: true,
+        observations: { promotions: true },
+      },
     });
     if (!candidate) {
       throw new NotFoundException('候选商品不存在');
     }
-    if (!candidate.matchResult) {
+    const record = candidate.ruleResult ?? candidate.matchResult;
+    if (!record) {
       throw new NotFoundException('该商品还没有识别结果，无法人工复核');
     }
-    const match = candidate.matchResult;
     const hasSkuDecisions = Boolean(dto.skuDecisions?.length);
     if (!dto.decision && !hasSkuDecisions) {
       throw new BadRequestException('缺少人工判断');
     }
 
     if (dto.decision) {
-      match.manualDecision = dto.decision as ManualDecisionEnum;
-      match.manualNote = dto.note?.trim() || null;
+      record.manualDecision = dto.decision as ManualDecisionEnum;
+      record.manualNote = dto.note?.trim() || null;
     }
 
     if (hasSkuDecisions) {
@@ -299,7 +315,7 @@ export class SearchService {
         ),
       );
       const decisions = new Map(
-        (match.manualSkuDecisions ?? []).map((item) => [item.skuId, item]),
+        (record.manualSkuDecisions ?? []).map((item) => [item.skuId, item]),
       );
       const reviewedAt = new Date().toISOString();
       for (const item of dto.skuDecisions ?? []) {
@@ -318,20 +334,24 @@ export class SearchService {
         };
         decisions.set(item.skuId, decision);
       }
-      match.manualSkuDecisions = [...decisions.values()];
+      record.manualSkuDecisions = [...decisions.values()];
     }
 
-    match.reviewedAt = new Date();
-    // 人工判断与 AI 原始判断分开保存，不覆盖 AI 字段
-    await this.matchRepo.save(match);
-    candidate.matchResult = match;
+    record.reviewedAt = new Date();
+    // 人工判断与规则结果分开保存，不覆盖规则字段。
+    if (candidate.ruleResult) {
+      candidate.ruleResult = await this.ruleRepo.save(candidate.ruleResult);
+    } else if (candidate.matchResult) {
+      candidate.matchResult = await this.matchRepo.save(candidate.matchResult);
+    }
     return toProductDto(candidate);
   }
 
   getProviderStatuses() {
     const usage = this.everyInfraUsage.summary();
     return {
-      ai: this.classifier.getStatus(),
+      searchMode: parseSearchDataMode(this.config.get<string>('SEARCH_DATA_MODE')),
+      liveRequestsEnabled: liveRequestsEnabled(this.config),
       platforms: this.registry.getStatuses(),
       dataSourceMode: parseSourceMode(this.config.get<string>('DATA_SOURCE_MODE')),
       everyInfra: {
@@ -353,6 +373,7 @@ export class SearchService {
    * 这里不会自动调用任何收费接口，只有显式请求才会执行。
    */
   async search1688ByImage(imageUrl: string) {
+    assertLiveSearchAllowed(this.config);
     const provider = this.registry.get(
       PlatformEnum.ALIBABA1688,
       ProviderKeyEnum.EVERYINFRA_ALIBABA1688,

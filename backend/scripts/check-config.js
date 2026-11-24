@@ -2,7 +2,7 @@
 /**
  * 配置自检：
  *   node scripts/check-config.js         只检查配置是否存在、数据库与浏览器是否可用
- *   node scripts/check-config.js --live  额外发起真实的 DeepSeek / 淘宝 / 拼多多请求
+ *   node scripts/check-config.js --live  额外发起真实平台请求（需显式授权）
  *
  * 说明：
  * - 不会打印任何密钥、密码、Cookie 或完整请求参数。
@@ -120,63 +120,6 @@ async function checkDatabase() {
     }
   } finally {
     if (connection) await connection.end().catch(() => undefined);
-  }
-}
-
-async function checkDeepseek() {
-  const configured = checkPresence('DEEPSEEK_API_KEY');
-  if (!configured) return;
-  if (!LIVE) {
-    record('DeepSeek', 'PENDING', '密钥已填写，加 --live 发起真实请求验证');
-    return;
-  }
-
-  const baseUrl = (value('DEEPSEEK_BASE_URL') || 'https://api.deepseek.com').replace(/\/+$/, '');
-  const model = value('DEEPSEEK_MODEL') || 'deepseek-flash';
-  const headers = { Authorization: `Bearer ${value('DEEPSEEK_API_KEY')}` };
-
-  try {
-    const models = await axios.get(`${baseUrl}/models`, { headers, timeout: 15000 });
-    const ids = Array.isArray(models.data?.data)
-      ? models.data.data.map((item) => item.id)
-      : [];
-    if (ids.includes(model)) {
-      record('DeepSeek', 'OK', `密钥有效，模型 ${model} 可用`);
-    } else {
-      record(
-        'DeepSeek',
-        'WARN',
-        `密钥有效，但未在模型列表中看到 ${model}；可用模型：${ids.slice(0, 8).join(', ') || '未返回'}`,
-      );
-    }
-    return;
-  } catch (error) {
-    if (error.response?.status === 401) {
-      record('DeepSeek', 'FAIL', 'API Key 无效（HTTP 401）');
-      return;
-    }
-    if (error.response?.status !== 404) {
-      record('DeepSeek', 'WARN', `/models 不可用（${error.response?.status ?? error.message}），尝试最小对话请求`);
-    }
-  }
-
-  try {
-    await axios.post(
-      `${baseUrl}/chat/completions`,
-      {
-        model,
-        messages: [{ role: 'user', content: '收到请回复 ok' }],
-        max_tokens: 2,
-        temperature: 0,
-        stream: false,
-      },
-      { headers: { ...headers, 'Content-Type': 'application/json' }, timeout: 30000 },
-    );
-    record('DeepSeek', 'OK', `密钥有效，模型 ${model} 可完成最小对话请求`);
-  } catch (error) {
-    const status = error.response?.status;
-    const message = error.response?.data?.error?.message ?? error.message;
-    record('DeepSeek', 'FAIL', `${status ? `HTTP ${status} · ` : ''}${String(message).slice(0, 200)}`);
   }
 }
 
@@ -467,18 +410,29 @@ function checkPlaywright() {
 async function main() {
   console.log('');
   console.log('StickerFinder 配置自检');
-  console.log(`模式：${LIVE ? 'LIVE（会发起真实平台/AI 请求）' : 'PRESENCE（只检查配置与本地环境）'}`);
+  console.log(`模式：${LIVE ? 'LIVE（会发起真实平台请求）' : 'PRESENCE（只检查配置与本地环境）'}`);
   console.log('说明：本脚本不会打印任何密钥、密码或 Cookie。');
   console.log('─'.repeat(72));
 
-  checkOptional('AI_CLASSIFY_ENABLED', '未设置，默认启用');
-  checkOptional('AI_VISION_ENABLED', '未设置，默认关闭');
-  checkOptional('DEEPSEEK_MODEL', '未设置，默认 deepseek-flash');
+  if (LIVE) {
+    const liveAllowed =
+      (value('SEARCH_DATA_MODE') || 'fixture') === 'live' &&
+      (value('LIVE_PROVIDER_REQUESTS_ENABLED') || 'false') === 'true';
+    if (!liveAllowed) {
+      console.log(
+        '已阻止真实请求：请先设置 SEARCH_DATA_MODE=live 且 LIVE_PROVIDER_REQUESTS_ENABLED=true。',
+      );
+      process.exit(1);
+    }
+  }
+
+  checkOptional('SEARCH_DATA_MODE', '未设置，默认 fixture（只读本地测试数据）');
+  checkOptional('LIVE_PROVIDER_REQUESTS_ENABLED', '未设置，默认 false（禁止真实采集）');
+  checkOptional('FIXTURE_DIR', '未设置，默认 test/fixtures/raw');
   checkOptional('PLAYWRIGHT_HEADLESS', '未设置，默认可见浏览器');
   checkOptional('PLAYWRIGHT_CHANNEL', '未设置，使用 Playwright 自带 Chromium');
 
   await checkDatabase();
-  await checkDeepseek();
   await checkQovia();
   await checkOkData();
   await checkTaobao();

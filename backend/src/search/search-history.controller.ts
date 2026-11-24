@@ -4,7 +4,7 @@ import { SearchHistoryService } from './search-history.service';
 import { SearchService } from './search.service';
 
 /**
- * 搜索历史只读取数据库快照：不调用 EveryInfra、DeepSeek 或任何外部接口。
+ * 搜索历史只读取数据库快照：不调用 EveryInfra 或任何外部接口。
  */
 @Controller('search-history')
 export class SearchHistoryController {

@@ -4,9 +4,9 @@ import { In, Repository } from 'typeorm';
 import {
   ALL_PLATFORMS,
   ManualDecisionEnum,
-  MatchStatusEnum,
   PlatformEnum,
 } from '../common/enums';
+import { RuleStatusEnum } from '../rules/rule.types';
 import {
   PlatformSearchTask,
   ProductCandidate,
@@ -153,25 +153,36 @@ export class SearchHistoryService {
     return new Map(rows.map((row) => [row.runId, Number(row.count) || 0]));
   }
 
-  /** 人工判断优先于 AI 判断，与详情页的有效匹配状态保持一致。 */
+  /**
+   * 有效匹配数：规则确认或人工确认。
+   * 历史搜索没有规则结果时，只承认人工判断，不把旧 AI 的 MATCH 当成规则结果。
+   */
   private async matchedCounts(runIds: string[]): Promise<Map<string, number>> {
     const rows = await this.candidateRepo
       .createQueryBuilder('candidate')
-      .innerJoin('product_match_results', 'mr', 'mr.candidate_id = candidate.id')
+      .leftJoin(
+        'product_rule_results',
+        'rr',
+        'rr.candidate_id = candidate.id',
+      )
+      .leftJoin(
+        'product_match_results',
+        'mr',
+        'mr.candidate_id = candidate.id',
+      )
       .select('candidate.search_run_id', 'runId')
       .addSelect('COUNT(*)', 'count')
       .where('candidate.search_run_id IN (:...runIds)', { runIds })
       .andWhere(
-        `CASE
-          WHEN mr.manual_decision = :manualMatch THEN :match
-          WHEN mr.manual_decision = :manualNoMatch THEN :noMatch
-          ELSE mr.match_status
-        END = :match`,
+        `(CASE
+          WHEN rr.manual_decision = :manualMatch THEN 1
+          WHEN rr.status = :ruleConfirmed THEN 1
+          WHEN mr.manual_decision = :manualMatch THEN 1
+          ELSE 0
+        END) = 1`,
         {
           manualMatch: ManualDecisionEnum.MATCH,
-          manualNoMatch: ManualDecisionEnum.NO_MATCH,
-          match: MatchStatusEnum.MATCH,
-          noMatch: MatchStatusEnum.NO_MATCH,
+          ruleConfirmed: RuleStatusEnum.MATCH_CONFIRMED,
         },
       )
       .groupBy('candidate.search_run_id')

@@ -48,37 +48,6 @@ export type SearchRunStatus =
 
 export type MatchStatus = 'MATCH' | 'NO_MATCH' | 'UNCERTAIN';
 
-export type CandidateRelevance = 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
-
-export type MatchAssessment = 'MATCH' | 'CONFLICT' | 'UNKNOWN';
-
-export type VisualMatch =
-  | 'VISUAL_EXACT'
-  | 'VISUAL_SIMILAR'
-  | 'VISUAL_ABSENT'
-  | 'VISUAL_UNAVAILABLE';
-
-export type NextAction =
-  | 'NONE'
-  | 'FETCH_PRODUCT_DETAIL'
-  | 'FETCH_SKU'
-  | 'FETCH_IMAGES'
-  | 'MANUAL_REVIEW';
-
-export type SkuVerificationStatus =
-  | 'PENDING'
-  | 'VERIFIED'
-  | 'PARTIAL'
-  | 'NOT_AVAILABLE'
-  | 'FAILED';
-
-export type PriceVerificationStatus =
-  | 'PENDING'
-  | 'VERIFIED'
-  | 'PARTIAL'
-  | 'UNVERIFIED'
-  | 'FAILED';
-
 export type MatchType =
   | 'EXACT_SINGLE'
   | 'TARGET_VARIANT'
@@ -177,10 +146,52 @@ export interface PriceSummary {
   totalConfirmed: number;
 }
 
-export type AiStatus = 'OK' | 'FAILED' | 'SKIPPED';
 export type ManualDecision = 'PENDING' | 'MATCH' | 'NO_MATCH';
 export type SourceType = 'official_api' | 'browser' | 'third_party';
 export type ObservationSource = 'official_api' | 'third_party_api' | 'playwright';
+
+export type RuleStatus =
+  | 'RULE_MATCH_CONFIRMED'
+  | 'RULE_MATCH_NO_PRICE'
+  | 'RULE_NO_MATCH'
+  | 'RULE_PENDING_DETAIL';
+
+export type RulePriceStatus =
+  | 'PRICE_VALID'
+  | 'PRICE_MISSING'
+  | 'PRICE_INVALID'
+  | 'PRICE_AMBIGUOUS';
+
+export interface RulePrice {
+  amount: number | null;
+  currency: string | null;
+  skuId: string | null;
+  source: string | null;
+  note: string | null;
+}
+
+export interface ProductRule {
+  status: RuleStatus;
+  priceStatus: RulePriceStatus;
+  titleMatched: boolean;
+  detailChecked: boolean;
+  matchedTargetKeywords: string[];
+  matchedSeriesKeywords: string[];
+  matchedSkuIds: string[];
+  matchedContents: string[];
+  matchType: MatchType | null;
+  reason: string | null;
+  detailError: string | null;
+  price: RulePrice;
+  evaluatedAt: string | null;
+}
+
+export interface ManualReview {
+  decision: ManualDecision;
+  note: string | null;
+  skuDecisions: SkuManualDecision[];
+  reviewedAt: string | null;
+}
 
 export interface PriceInfo {
   amount: number | null;
@@ -210,7 +221,6 @@ export interface PriceTier {
   minQuantity: number;
   price: number;
 }
-
 /** 1688 批发采购价，独立于零售 PriceInfo */
 export interface WholesalePriceInfo {
   priceMin: number | null;
@@ -222,55 +232,11 @@ export interface WholesalePriceInfo {
   note?: string | null;
 }
 
-export interface SkuDecision {
-  skuId: string;
-  matchStatus: 'MATCH' | 'NO_MATCH' | 'UNCERTAIN';
-  reason: string;
-}
-
 export interface SkuManualDecision {
   skuId: string;
   decision: 'TARGET' | 'BUNDLE' | 'EXCLUDED';
   note?: string | null;
   reviewedAt: string;
-}
-
-export interface EvidenceEntry {
-  sourceField: 'title' | 'description' | 'sku' | 'image';
-  content: string;
-  interpretation: string;
-}
-
-export interface ProductMatch {
-  aiStatus: AiStatus;
-  matchStatus: MatchStatus;
-  matchType: MatchType | null;
-  candidateRelevance: CandidateRelevance | null;
-  categoryMatch: MatchAssessment | null;
-  seriesMatch: MatchAssessment | null;
-  targetItemMatch: MatchAssessment | null;
-  visualMatch: VisualMatch | null;
-  confidence: number | null;
-  summary: string | null;
-  reason: string | null;
-  matchedContents: string[];
-  matchedSkuIds: string[];
-  skuDecisions: SkuDecision[];
-  evidence: EvidenceEntry[];
-  nextAction: NextAction | null;
-  rawMatchStatus: MatchStatus | null;
-  rawConfidence: number | null;
-  safetyWarnings: string[];
-  safetyBlockers: string[];
-  skuVerificationStatus: SkuVerificationStatus;
-  priceVerificationStatus: PriceVerificationStatus;
-  needsManualReview: boolean;
-  manualDecision: ManualDecision;
-  manualNote: string | null;
-  manualSkuDecisions: SkuManualDecision[];
-  reviewedAt: string | null;
-  aiModel: string | null;
-  aiError: string | null;
 }
 
 export interface ProductObservation {
@@ -317,8 +283,9 @@ export interface Product {
   promotions: Promotion[];
   sourceType: SourceType;
   collectedAt: string;
-  effectiveMatchStatus: MatchStatus;
-  match: ProductMatch | null;
+  effectiveRuleStatus: MatchStatus;
+  rule: ProductRule | null;
+  manual: ManualReview | null;
   observations: ProductObservation[];
   priceConflict: boolean;
 }
@@ -397,6 +364,8 @@ export interface SearchDetail {
   errorMessage: string | null;
   startedAt: string;
   completedAt: string | null;
+  dataSource: 'live' | 'fixture';
+  replay: boolean;
   platforms: PlatformResult[];
   priceSummary: PriceSummary | null;
 }
@@ -418,16 +387,40 @@ export interface ProviderStatusInfo {
   channels?: ProviderChannelStatusInfo[];
 }
 
-export interface AiStatusInfo {
-  configured: boolean;
-  model: string;
-  visionEnabled: boolean;
-  reason: string;
+export interface ProvidersStatusResponse {
+  searchMode: 'fixture' | 'live';
+  liveRequestsEnabled: boolean;
+  platforms: Record<Platform, ProviderStatusInfo>;
 }
 
-export interface ProvidersStatusResponse {
-  ai: AiStatusInfo;
-  platforms: Record<Platform, ProviderStatusInfo>;
+export interface FixturePlatformSummary {
+  platform: string;
+  productCount: number;
+  detailCount: number;
+  status: string | null;
+}
+
+export interface FixtureSummary {
+  id: string;
+  targetName: string;
+  seriesName: string | null;
+  collectedAt: string;
+  platforms: FixturePlatformSummary[];
+}
+
+export interface FixtureListResponse {
+  items: FixtureSummary[];
+  externalRequests: number;
+}
+
+export interface ReplayPayload {
+  fixtureId: string;
+  targetName?: string;
+  seriesName?: string;
+  aliases?: string[];
+  seriesAliases?: string[];
+  brandNames?: string[];
+  platforms?: Platform[];
 }
 
 export interface CreateSearchPayload {

@@ -1,21 +1,16 @@
 import {
-  CandidateRelevance,
-  EvidenceEntry,
-  MatchAssessment,
   MatchStatus,
   MatchType,
-  NextAction,
   ObservationSource,
   Platform,
   PriceComparisonGroup,
   PriceType,
-  PriceVerificationStatus,
   PromotionType,
+  RulePriceStatus,
+  RuleStatus,
   SearchRunStatus,
-  SkuVerificationStatus,
   SourceType,
   TaskStatus,
-  VisualMatch,
 } from './models';
 
 export const PLATFORM_META: Record<
@@ -82,6 +77,7 @@ export const PROVIDER_META: Record<string, { label: string }> = {
   everyinfra_douyin: { label: 'EveryInfra 抖音' },
   everyinfra_xiaohongshu: { label: 'EveryInfra 小红书' },
   everyinfra_alibaba1688: { label: 'EveryInfra 1688' },
+  fixture: { label: '本地测试数据' },
 };
 
 export const OBSERVATION_SOURCE_META: Record<ObservationSource, string> = {
@@ -105,64 +101,40 @@ export const MATCH_STATUS_META: Record<MatchStatus, { label: string; tone: strin
   UNCERTAIN: { label: '待确认', tone: 'warning' },
 };
 
-export const CANDIDATE_RELEVANCE_META: Record<
-  CandidateRelevance,
+export const RULE_STATUS_META: Record<
+  RuleStatus,
   { label: string; tone: string; description: string }
 > = {
-  HIGH: { label: '高相关', tone: 'processing', description: '商品类别与目标系列均明确匹配' },
-  MEDIUM: { label: '中相关', tone: 'warning', description: '品牌或系列有关联，仍需进一步核实' },
-  LOW: { label: '低相关', tone: 'default', description: '只有弱关键词或模糊关联' },
-  NONE: { label: '无关', tone: 'error', description: '与目标商品完全无关' },
+  RULE_MATCH_CONFIRMED: {
+    label: '规则确认',
+    tone: 'success',
+    description: '标题与详情均包含目标商品，且价格有效',
+  },
+  RULE_MATCH_NO_PRICE: {
+    label: '已确认 · 无有效价',
+    tone: 'warning',
+    description: '详情确认包含目标商品，但没有可用的 SKU 价格',
+  },
+  RULE_NO_MATCH: {
+    label: '规则不匹配',
+    tone: 'default',
+    description: '标题或详情不符合关键词规则',
+  },
+  RULE_PENDING_DETAIL: {
+    label: '待详情确认',
+    tone: 'warning',
+    description: '标题符合规则，等待详情确认',
+  },
 };
 
-export const MATCH_ASSESSMENT_META: Record<MatchAssessment, { label: string; tone: string }> = {
-  MATCH: { label: '匹配', tone: 'success' },
-  CONFLICT: { label: '冲突', tone: 'error' },
-  UNKNOWN: { label: '未知', tone: 'default' },
-};
-
-export const VISUAL_MATCH_META: Record<VisualMatch, { label: string; tone: string }> = {
-  VISUAL_EXACT: { label: '视觉一致', tone: 'success' },
-  VISUAL_SIMILAR: { label: '视觉相似', tone: 'warning' },
-  VISUAL_ABSENT: { label: '无视觉证据', tone: 'default' },
-  VISUAL_UNAVAILABLE: { label: '未做视觉比对', tone: 'default' },
-};
-
-export const NEXT_ACTION_META: Record<NextAction, { label: string; description: string }> = {
-  NONE: { label: '无需处理', description: '无需额外补充信息' },
-  FETCH_PRODUCT_DETAIL: { label: '补充商品详情', description: '需要获取商品详情' },
-  FETCH_SKU: { label: '补充 SKU', description: '需要获取 SKU 列表' },
-  FETCH_IMAGES: { label: '补充图片', description: '需要补充商品图片' },
-  MANUAL_REVIEW: { label: '人工复核', description: '机器无法继续确认，需要人工检查' },
-};
-
-export const EVIDENCE_SOURCE_LABEL: Record<EvidenceEntry['sourceField'], string> = {
-  title: '标题',
-  description: '描述',
-  sku: 'SKU',
-  image: '图片',
-};
-
-export const SKU_VERIFICATION_META: Record<
-  SkuVerificationStatus,
+export const RULE_PRICE_STATUS_META: Record<
+  RulePriceStatus,
   { label: string; tone: string }
 > = {
-  PENDING: { label: 'SKU 待核验', tone: 'warning' },
-  VERIFIED: { label: 'SKU 已核验', tone: 'success' },
-  PARTIAL: { label: '部分 SKU 已核验', tone: 'processing' },
-  NOT_AVAILABLE: { label: '无 SKU 信息', tone: 'default' },
-  FAILED: { label: 'SKU 核验失败', tone: 'error' },
-};
-
-export const PRICE_VERIFICATION_META: Record<
-  PriceVerificationStatus,
-  { label: string; tone: string }
-> = {
-  PENDING: { label: '价格待核验', tone: 'warning' },
-  VERIFIED: { label: '目标价已核验', tone: 'success' },
-  PARTIAL: { label: '部分价格已核验', tone: 'processing' },
-  UNVERIFIED: { label: '仅列表价', tone: 'default' },
-  FAILED: { label: '价格获取失败', tone: 'error' },
+  PRICE_VALID: { label: '价格有效', tone: 'success' },
+  PRICE_MISSING: { label: '价格缺失', tone: 'default' },
+  PRICE_INVALID: { label: '价格异常', tone: 'error' },
+  PRICE_AMBIGUOUS: { label: '价格待确认', tone: 'warning' },
 };
 
 export const PRICE_TYPE_META: Record<PriceType, string> = {
@@ -249,12 +221,6 @@ export const SOURCE_TYPE_META: Record<SourceType, string> = {
   third_party: '第三方数据服务',
 };
 
-export const AI_STATUS_LABEL: Record<string, string> = {
-  OK: 'AI 已识别',
-  FAILED: 'AI 识别失败',
-  SKIPPED: 'AI 未配置',
-};
-
 export const MANUAL_DECISION_LABEL: Record<string, string> = {
   PENDING: '待人工判断',
   MATCH: '人工确认匹配',
@@ -274,11 +240,6 @@ export function formatDateTime(value: string | null | undefined): string {
     second: '2-digit',
     hour12: false,
   });
-}
-
-export function formatConfidence(value: number | null | undefined): string {
-  if (value === null || value === undefined) return '—';
-  return `${Math.round(value * 100)}%`;
 }
 
 export function formatDuration(value: number | null | undefined): string {

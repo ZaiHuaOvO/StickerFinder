@@ -59,6 +59,8 @@ function configService(extra: Record<string, string> = {}): ConfigService {
   return new ConfigService({
     EVERYINFRA_API_KEY: 'test-key',
     EVERYINFRA_BASE_URL: 'https://api.example.test',
+    SEARCH_DATA_MODE: 'live',
+    LIVE_PROVIDER_REQUESTS_ENABLED: 'true',
     ...extra,
   });
 }

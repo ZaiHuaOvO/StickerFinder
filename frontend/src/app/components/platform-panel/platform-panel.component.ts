@@ -53,18 +53,28 @@ export class PlatformPanelComponent {
     () =>
       this.result().products.length + this.result().uncertainProducts.length,
   );
-  readonly detailVerifiedCount = computed(
-    () =>
-      [...this.result().products, ...this.result().uncertainProducts].filter(
+  readonly ruleStats = computed(() => {
+    const all = [
+      ...this.result().products,
+      ...this.result().uncertainProducts,
+      ...this.excludedProducts(),
+    ];
+    return {
+      titleMatched: all.filter((product) => product.rule?.titleMatched).length,
+      detailConfirmed: all.filter(
         (product) =>
-          product.match?.priceVerificationStatus === 'VERIFIED' ||
-          product.match?.priceVerificationStatus === 'PARTIAL',
+          product.rule?.detailChecked &&
+          product.rule.status !== 'RULE_NO_MATCH',
       ).length,
-  );
-  readonly progressText = computed(
-    () =>
-      `已找到 ${this.result().resultCount} · 已识别 ${this.recognizedCount()} · 详情核验 ${this.detailVerifiedCount()}`,
-  );
+      priceValid: all.filter(
+        (product) => product.rule?.priceStatus === 'PRICE_VALID',
+      ).length,
+    };
+  });
+  readonly progressText = computed(() => {
+    const stats = this.ruleStats();
+    return `已找到 ${this.result().resultCount} · 标题命中 ${stats.titleMatched} · 详情确认 ${stats.detailConfirmed} · 价格有效 ${stats.priceValid}`;
+  });
   readonly waitingChannels = computed(() =>
     this.channels().filter((channel) => channel.status === 'WAITING_MANUAL_VERIFICATION'),
   );
