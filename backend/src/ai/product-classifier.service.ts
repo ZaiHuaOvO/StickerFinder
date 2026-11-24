@@ -3,11 +3,22 @@ import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
 import {
   AiStatusEnum,
+  CandidateRelevanceEnum,
+  MatchAssessmentEnum,
   MatchStatusEnum,
   MatchTypeEnum,
+  NextActionEnum,
+  PriceVerificationStatusEnum,
+  SkuVerificationStatusEnum,
+  VisualMatchEnum,
 } from '../common/enums';
 import { NormalizedProduct } from '../common/interfaces/normalized-product.interface';
-import type { SkuDecision } from '../entities/product-match-result.entity';
+import { SkuOption } from '../common/interfaces/price.interface';
+import { normalizeTargetText } from '../common/utils/text.util';
+import type {
+  EvidenceEntry,
+  SkuDecision,
+} from '../entities/product-match-result.entity';
 import {
   ClassificationResult,
   classificationResultSchema,
@@ -19,12 +30,15 @@ import {
   buildClassificationUserPrompt,
   CLASSIFICATION_SYSTEM_PROMPT,
   PROMPT_VERSION,
+  TARGET_CATEGORY,
 } from './prompts/product-classification.prompt';
 
 export interface TargetDescriptor {
   name: string;
   seriesName?: string | null;
   aliases: string[];
+  seriesAliases?: string[];
+  brandNames?: string[];
   referenceImagePath?: string | null;
 }
 
@@ -32,13 +46,25 @@ export interface ClassificationOutcome {
   aiStatus: AiStatusEnum;
   matchStatus: MatchStatusEnum;
   matchType: MatchTypeEnum | null;
+  candidateRelevance: CandidateRelevanceEnum | null;
+  categoryMatch: MatchAssessmentEnum | null;
+  seriesMatch: MatchAssessmentEnum | null;
+  targetItemMatch: MatchAssessmentEnum | null;
+  visualMatch: VisualMatchEnum | null;
   confidence: number | null;
   summary: string;
   reason: string;
   matchedContents: string[];
   matchedSkuIds: string[];
   skuDecisions: SkuDecision[];
-  evidence: string[];
+  evidence: EvidenceEntry[];
+  nextAction: NextActionEnum | null;
+  rawMatchStatus: MatchStatusEnum | null;
+  rawConfidence: number | null;
+  safetyWarnings: string[];
+  safetyBlockers: string[];
+  skuVerificationStatus: SkuVerificationStatusEnum;
+  priceVerificationStatus: PriceVerificationStatusEnum;
   needsManualReview: boolean;
   rawResponse: Record<string, unknown> | null;
   error: string | null;
@@ -75,13 +101,23 @@ export class ProductClassifierService {
     target: TargetDescriptor,
     candidate: NormalizedProduct,
     candidateRef: string,
+    options: {
+      detailEnriched?: boolean;
+      referenceCases?: Array<{
+        title: string;
+        platform: string;
+        manualDecision: string;
+        note?: string | null;
+      }>;
+    } = {},
   ): Promise<ClassificationOutcome> {
     if (!this.deepseek.isConfigured()) {
       return this.skippedOutcome();
     }
 
     const visionEnabled = this.imageFetcher.isVisionEnabled();
-    const cacheKey = this.cacheKey(target, candidate, visionEnabled);
+    const detailEnriched = options.detailEnriched === true;
+    const cacheKey = this.cacheKey(target, candidate, visionEnabled, detailEnriched);
     const cached = this.cache.get(cacheKey);
     if (cached) {
       return cached;
@@ -149,6 +185,7 @@ export class ProductClassifierService {
     const payload = this.buildPayload(target, candidate, missingInformation, {
       imageCount: imageDataUrls.length,
       referenceImageIncluded: referenceImageUsed,
+      referenceCases: options.referenceCases,
     });
     const userPrompt = buildClassificationUserPrompt(payload);
     const rawMinConfidence = Number.parseFloat(
@@ -174,6 +211,8 @@ export class ProductClassifierService {
           minConfidence,
           missingInformation,
           imageConfidencePenalty,
+          imageDataUrls.length,
+          detailEnriched,
         );
         const outcome: ClassificationOutcome = {
           aiStatus: AiStatusEnum.OK,
@@ -199,6 +238,11 @@ export class ProductClassifierService {
       aiStatus: AiStatusEnum.FAILED,
       matchStatus: MatchStatusEnum.UNCERTAIN,
       matchType: MatchTypeEnum.UNCERTAIN,
+      candidateRelevance: null,
+      categoryMatch: null,
+      seriesMatch: null,
+      targetItemMatch: null,
+      visualMatch: null,
       confidence: null,
       summary: 'AI 识别失败，已保留原始商品信息，请人工确认',
       reason: 'AI 识别失败，商品保留在待确认区域，请人工核对原始商品页面',
@@ -206,6 +250,13 @@ export class ProductClassifierService {
       matchedSkuIds: [],
       skuDecisions: [],
       evidence: [],
+      nextAction: NextActionEnum.MANUAL_REVIEW,
+      rawMatchStatus: null,
+      rawConfidence: null,
+      safetyWarnings: [],
+      safetyBlockers: ['AI 识别失败，未取得可用结果'],
+      skuVerificationStatus: SkuVerificationStatusEnum.NOT_AVAILABLE,
+      priceVerificationStatus: PriceVerificationStatusEnum.UNVERIFIED,
       needsManualReview: true,
       rawResponse: null,
       error: lastError.slice(0, 1000),
@@ -218,6 +269,11 @@ export class ProductClassifierService {
       aiStatus: AiStatusEnum.SKIPPED,
       matchStatus: MatchStatusEnum.UNCERTAIN,
       matchType: MatchTypeEnum.UNCERTAIN,
+      candidateRelevance: null,
+      categoryMatch: null,
+      seriesMatch: null,
+      targetItemMatch: null,
+      visualMatch: null,
       confidence: null,
       summary: 'AI 识别未配置，商品已保留在待确认区域',
       reason: 'AI 识别未配置（缺少 DEEPSEEK_API_KEY 或已禁用），未对商品做自动判断',
@@ -225,6 +281,13 @@ export class ProductClassifierService {
       matchedSkuIds: [],
       skuDecisions: [],
       evidence: [],
+      nextAction: NextActionEnum.MANUAL_REVIEW,
+      rawMatchStatus: null,
+      rawConfidence: null,
+      safetyWarnings: [],
+      safetyBlockers: ['AI 识别未配置，未做自动判断'],
+      skuVerificationStatus: SkuVerificationStatusEnum.NOT_AVAILABLE,
+      priceVerificationStatus: PriceVerificationStatusEnum.UNVERIFIED,
       needsManualReview: true,
       rawResponse: null,
       error: 'AI 识别未配置',
@@ -236,18 +299,31 @@ export class ProductClassifierService {
     target: TargetDescriptor,
     candidate: NormalizedProduct,
     missingInformation: string[],
-    imageInput: { imageCount: number; referenceImageIncluded: boolean },
+    imageInput: {
+      imageCount: number;
+      referenceImageIncluded: boolean;
+      referenceCases?: Array<{
+        title: string;
+        platform: string;
+        manualDecision: string;
+        note?: string | null;
+      }>;
+    },
   ) {
     const skuOptions = candidate.skuOptions.slice(0, 50).map((sku, index) => ({
       skuId: sku.skuId ?? `sku-${index + 1}`,
       name: sku.name.slice(0, 200),
-      price: sku.price ?? null,
     }));
     return {
       target: {
         name: target.name,
         seriesName: target.seriesName ?? null,
         aliases: target.aliases,
+        seriesAliases: target.seriesAliases ?? [],
+        brandNames: target.brandNames ?? [],
+        normalizedName: normalizeTargetText(target.name),
+        normalizedSeries: normalizeTargetText(target.seriesName),
+        targetCategory: TARGET_CATEGORY,
         referenceImageProvided: Boolean(target.referenceImagePath),
       },
       candidate: {
@@ -268,6 +344,7 @@ export class ProductClassifierService {
             }
           : null,
       missingInformation,
+      referenceCases: imageInput.referenceCases?.slice(0, 2) ?? [],
     };
   }
 
@@ -277,11 +354,16 @@ export class ProductClassifierService {
     minConfidence: number,
     missingInformation: string[],
     imageConfidencePenalty: number,
+    imageCount: number,
+    detailEnriched: boolean,
   ): Omit<ClassificationOutcome, 'aiStatus' | 'rawResponse' | 'error' | 'model'> {
-    const notes: string[] = [];
-    let matchStatus = result.matchStatus as MatchStatusEnum;
+    const warnings: string[] = [...missingInformation];
+    const blockers: string[] = [];
+    const rawMatchStatus = result.matchStatus as MatchStatusEnum;
+    const rawConfidence = Math.max(0, Math.min(1, result.confidence));
+    let matchStatus = rawMatchStatus;
     let matchType: MatchTypeEnum | null = result.matchType as MatchTypeEnum | null;
-    let confidence = Math.max(0, Math.min(1, result.confidence));
+    let confidence = rawConfidence;
     let needsManualReview = result.needsManualReview;
 
     const providedSkus = candidate.skuOptions.map(
@@ -289,12 +371,22 @@ export class ProductClassifierService {
     );
     const knownSkuIds = new Set(providedSkus);
 
-    let matchedSkuIds = result.matchedSkuIds.filter((id) => knownSkuIds.has(id));
-    if (matchedSkuIds.length !== result.matchedSkuIds.length) {
-      notes.push('AI 返回了输入中不存在的 SKU ID，已剔除');
+    const invalidMatchedSkuIds = result.matchedSkuIds.filter(
+      (id) => !knownSkuIds.has(id),
+    );
+    if (invalidMatchedSkuIds.length > 0) {
+      blockers.push('AI 返回了输入中不存在的 SKU ID，已剔除');
       needsManualReview = true;
     }
+    let matchedSkuIds = result.matchedSkuIds.filter((id) => knownSkuIds.has(id));
 
+    const invalidSkuDecisions = result.skuDecisions.filter(
+      (decision) => !knownSkuIds.has(decision.skuId),
+    );
+    if (invalidSkuDecisions.length > 0) {
+      blockers.push('AI 返回了输入中不存在的 SKU 判断，已剔除');
+      needsManualReview = true;
+    }
     let skuDecisions: SkuDecision[] = result.skuDecisions.filter((decision) =>
       knownSkuIds.has(decision.skuId),
     );
@@ -309,7 +401,7 @@ export class ProductClassifierService {
         }));
       if (missingDecisions.length > 0) {
         skuDecisions = [...skuDecisions, ...missingDecisions];
-        needsManualReview = true;
+        warnings.push('AI 未逐一判断全部 SKU，缺失项已标记待确认');
       }
     }
 
@@ -319,9 +411,30 @@ export class ProductClassifierService {
       (id) => decisionById.get(id)?.matchStatus === 'MATCH',
     );
     if (reconciledSkuIds.length !== matchedSkuIds.length) {
-      notes.push('AI 返回的匹配 SKU 与其 SKU 判断不一致，已收紧为一致结果');
+      blockers.push('AI 返回的匹配 SKU 与其 SKU 判断不一致，已收紧为一致结果');
       needsManualReview = true;
       matchedSkuIds = reconciledSkuIds;
+    }
+
+    const availableEvidenceSources = new Set<EvidenceEntry['sourceField']>(['title']);
+    if (candidate.description) availableEvidenceSources.add('description');
+    if (candidate.skuOptions.length > 0) availableEvidenceSources.add('sku');
+    if (imageCount > 0) availableEvidenceSources.add('image');
+    const evidence = result.evidence.filter((entry) =>
+      availableEvidenceSources.has(entry.sourceField),
+    );
+    if (evidence.length !== result.evidence.length) {
+      warnings.push('AI 提供了输入中不存在的证据来源，已剔除');
+    }
+
+    // v2 明确：candidateRelevance 为 NONE 时 matchStatus 必须是 NO_MATCH
+    if (
+      result.candidateRelevance === CandidateRelevanceEnum.NONE &&
+      matchStatus !== MatchStatusEnum.NO_MATCH
+    ) {
+      blockers.push('候选相关性为 NONE，按规则判为不匹配');
+      matchStatus = MatchStatusEnum.NO_MATCH;
+      needsManualReview = true;
     }
 
     if (matchStatus === MatchStatusEnum.NO_MATCH) {
@@ -335,8 +448,7 @@ export class ProductClassifierService {
           0,
           Math.round((confidence - imageConfidencePenalty) * 1000) / 1000,
         );
-        needsManualReview = true;
-        notes.push(`视觉证据不足，置信度下调 ${imageConfidencePenalty.toFixed(2)}`);
+        warnings.push(`视觉证据不足，置信度下调 ${imageConfidencePenalty.toFixed(2)}`);
       }
 
       const validTypes = new Set<MatchTypeEnum>([
@@ -346,60 +458,151 @@ export class ProductClassifierService {
         MatchTypeEnum.CONTAINS_TARGET_FULL_SET,
       ]);
       if (!matchType || !validTypes.has(matchType)) {
-        notes.push('AI 判为 MATCH 但未给出有效的匹配类型');
+        blockers.push('AI 判为 MATCH 但未给出有效的匹配类型');
       }
-      if (result.evidence.length === 0) {
-        notes.push('AI 判为 MATCH 但未提供判断依据');
+      if (evidence.length === 0) {
+        blockers.push('AI 判为 MATCH 但未提供判断依据');
+      }
+      if (result.categoryMatch === MatchAssessmentEnum.CONFLICT) {
+        blockers.push('AI 判为 MATCH 但商品类别与目标类别冲突');
+      }
+      if (result.targetItemMatch !== MatchAssessmentEnum.MATCH) {
+        blockers.push('AI 判为 MATCH 但目标款式未确认匹配');
+      }
+      if (
+        result.seriesMatch === MatchAssessmentEnum.CONFLICT &&
+        (matchType === MatchTypeEnum.EXACT_SINGLE ||
+          matchType === MatchTypeEnum.TARGET_VARIANT)
+      ) {
+        blockers.push('AI 判为 MATCH 但目标系列与候选系列冲突');
       }
       if (confidence < minConfidence) {
-        notes.push(`置信度 ${confidence.toFixed(2)} 低于阈值 ${minConfidence}`);
+        blockers.push(`置信度 ${confidence.toFixed(2)} 低于阈值 ${minConfidence}`);
       }
       if (matchType === MatchTypeEnum.TARGET_VARIANT) {
         if (candidate.skuOptions.length === 0) {
-          notes.push('AI 判为指定 SKU 匹配，但商品没有 SKU 详情，无法确认具体售卖内容');
+          blockers.push('AI 判为指定 SKU 匹配，但商品没有 SKU 详情，无法确认具体售卖内容');
         } else if (matchedSkuIds.length === 0) {
-          notes.push('AI 判为指定 SKU 匹配但未指出符合的 SKU');
+          blockers.push('AI 判为指定 SKU 匹配但未指出符合的 SKU');
         }
       } else if (
-        (matchType === MatchTypeEnum.CONTAINS_TARGET_BUNDLE ||
-          matchType === MatchTypeEnum.CONTAINS_TARGET_FULL_SET) &&
-        candidate.skuOptions.length > 0 &&
-        matchedSkuIds.length === 0
+        matchType === MatchTypeEnum.CONTAINS_TARGET_BUNDLE ||
+        matchType === MatchTypeEnum.CONTAINS_TARGET_FULL_SET
       ) {
-        notes.push('商品存在多个 SKU，但 AI 未指出包含目标贴纸的 SKU');
+        if (matchedSkuIds.length === 0 && result.matchedContents.length === 0) {
+          blockers.push('AI 判为组合装/全系列匹配，但未给出具体包含内容或 SKU 证据');
+        }
       } else if (matchType === MatchTypeEnum.EXACT_SINGLE && candidate.skuOptions.length > 0) {
         const hasMatchedSku =
           matchedSkuIds.length > 0 ||
           skuDecisions.some((decision) => decision.matchStatus === 'MATCH');
         if (!hasMatchedSku) {
-          notes.push('商品存在 SKU 详情，但没有任何 SKU 被判为包含目标贴纸，无法确认售卖内容');
+          blockers.push('商品存在 SKU 详情，但没有任何 SKU 被判为包含目标贴纸，无法确认售卖内容');
         }
       }
-      if (notes.length > 0) {
+      if (blockers.length > 0) {
         matchStatus = MatchStatusEnum.UNCERTAIN;
         matchType = MatchTypeEnum.UNCERTAIN;
         needsManualReview = true;
       }
     }
 
-    const reasonParts = [result.reason.trim()];
-    if (notes.length > 0) {
-      reasonParts.push(`系统校验：${notes.join('；')}`);
+    let nextAction = result.nextAction as NextActionEnum;
+    if (
+      matchStatus === MatchStatusEnum.UNCERTAIN &&
+      nextAction === NextActionEnum.NONE
+    ) {
+      nextAction = NextActionEnum.MANUAL_REVIEW;
     }
-    if (missingInformation.length > 0) {
-      reasonParts.push(`信息缺失：${missingInformation.join('；')}`);
+    if (nextAction === NextActionEnum.MANUAL_REVIEW) {
+      needsManualReview = true;
+    }
+
+    const skuById = new Map(
+      candidate.skuOptions.map((sku, index) => [
+        sku.skuId ?? `sku-${index + 1}`,
+        sku,
+      ]),
+    );
+    const matchedSkuOptions = matchedSkuIds
+      .map((id) => skuById.get(id))
+      .filter((sku): sku is SkuOption => Boolean(sku));
+
+    let skuVerificationStatus = SkuVerificationStatusEnum.PENDING;
+    let priceVerificationStatus = PriceVerificationStatusEnum.UNVERIFIED;
+
+    if (candidate.skuOptions.length === 0) {
+      skuVerificationStatus = SkuVerificationStatusEnum.NOT_AVAILABLE;
+    } else if (detailEnriched && matchStatus === MatchStatusEnum.MATCH) {
+      if (matchedSkuOptions.length > 0) {
+        skuVerificationStatus = SkuVerificationStatusEnum.VERIFIED;
+        const pricedSkuCount = matchedSkuOptions.filter(
+          (sku) => typeof sku.price === 'number',
+        ).length;
+        if (pricedSkuCount === matchedSkuOptions.length) {
+          priceVerificationStatus = PriceVerificationStatusEnum.VERIFIED;
+        } else if (pricedSkuCount > 0) {
+          priceVerificationStatus = PriceVerificationStatusEnum.PARTIAL;
+        }
+      } else if (
+        (matchType === MatchTypeEnum.CONTAINS_TARGET_BUNDLE ||
+          matchType === MatchTypeEnum.CONTAINS_TARGET_FULL_SET) &&
+        result.matchedContents.length > 0
+      ) {
+        // 组合装/全系列以内容清单确认，未必能一一对应到 SKU
+        skuVerificationStatus = SkuVerificationStatusEnum.PARTIAL;
+      } else {
+        skuVerificationStatus = SkuVerificationStatusEnum.PENDING;
+      }
+    } else if (matchStatus === MatchStatusEnum.NO_MATCH) {
+      skuVerificationStatus = SkuVerificationStatusEnum.NOT_AVAILABLE;
+    } else {
+      const matchSkuCount = skuDecisions.filter(
+        (decision) => decision.matchStatus === 'MATCH',
+      ).length;
+      const uncertainSkuCount = skuDecisions.filter(
+        (decision) => decision.matchStatus === 'UNCERTAIN',
+      ).length;
+      if (matchSkuCount > 0 && uncertainSkuCount > 0) {
+        skuVerificationStatus = SkuVerificationStatusEnum.PARTIAL;
+      } else if (matchSkuCount > 0) {
+        // 已通过文字/SKU 名称定位，仍等待详情接口核验
+        skuVerificationStatus = SkuVerificationStatusEnum.PENDING;
+      } else {
+        skuVerificationStatus = SkuVerificationStatusEnum.NOT_AVAILABLE;
+      }
+    }
+
+    const reasonParts = [result.reason.trim()];
+    if (blockers.length > 0) {
+      reasonParts.push(`系统阻断：${blockers.join('；')}`);
+    }
+    if (warnings.length > 0) {
+      reasonParts.push(`系统警告：${warnings.join('；')}`);
     }
 
     return {
       matchStatus,
       matchType,
+      candidateRelevance: result.candidateRelevance as CandidateRelevanceEnum,
+      categoryMatch: result.categoryMatch as MatchAssessmentEnum,
+      seriesMatch: result.seriesMatch as MatchAssessmentEnum,
+      targetItemMatch: result.targetItemMatch as MatchAssessmentEnum,
+      visualMatch: result.visualMatch as VisualMatchEnum,
       confidence: Math.round(confidence * 1000) / 1000,
       summary: result.productContentSummary.trim() || result.reason.trim(),
       reason: reasonParts.join(' '),
       matchedContents: result.matchedContents,
       matchedSkuIds,
       skuDecisions,
-      evidence: result.evidence,
+      evidence,
+      nextAction,
+      rawMatchStatus,
+      rawConfidence,
+      safetyWarnings: warnings,
+      safetyBlockers: blockers,
+      skuVerificationStatus,
+      priceVerificationStatus,
       needsManualReview,
     };
   }
@@ -408,15 +611,20 @@ export class ProductClassifierService {
     target: TargetDescriptor,
     candidate: NormalizedProduct,
     visionEnabled: boolean,
+    detailEnriched: boolean,
   ): string {
     const material = {
       promptVersion: PROMPT_VERSION,
       model: this.deepseek.model,
       visionEnabled,
+      detailEnriched,
       target: {
         name: target.name,
         seriesName: target.seriesName ?? null,
         aliases: target.aliases,
+        seriesAliases: target.seriesAliases ?? [],
+        brandNames: target.brandNames ?? [],
+        category: TARGET_CATEGORY,
         referenceImagePath: target.referenceImagePath ?? null,
       },
       candidate: {

@@ -110,7 +110,7 @@ export class DouyinPlaywrightProvider implements PlatformProvider {
         if (LOGIN_HINTS.some((hint) => body.includes(hint))) {
           throw new BlockedError(
             'LOGIN_REQUIRED',
-            '抖音搜索需要登录：请运行 npm run browser:login -- douyin 完成扫码登录后重试',
+            '抖音搜索需要登录：请在任务面板打开验证浏览器完成登录后点击“继续采集”（或运行 npm run browser:login -- douyin）',
           );
         }
         if (NO_RESULT_HINTS.some((hint) => body.includes(hint))) {

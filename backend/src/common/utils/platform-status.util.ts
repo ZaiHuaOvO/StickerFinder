@@ -15,6 +15,14 @@ export interface PlatformTaskStatusShape {
 export function aggregatePlatformStatus(
   tasks: PlatformTaskStatusShape[],
 ): PlatformStatusEnum {
+  if (
+    tasks.some((task) => task.status === PlatformTaskStatusEnum.WAITING_MANUAL_VERIFICATION)
+  ) {
+    return PlatformStatusEnum.WAITING_MANUAL_VERIFICATION;
+  }
+  if (tasks.some((task) => task.status === PlatformTaskStatusEnum.CANCELLED)) {
+    return PlatformStatusEnum.CANCELLED;
+  }
   if (tasks.some((task) => task.status === PlatformTaskStatusEnum.RUNNING)) {
     return PlatformStatusEnum.RUNNING;
   }

@@ -1,9 +1,9 @@
 .search-card {
   position: relative;
-  padding: 34px 36px 30px;
+  padding: 20px 24px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 24px;
+  border-radius: 20px;
   box-shadow: var(--shadow-md);
   overflow: hidden;
 }
@@ -12,183 +12,209 @@
   content: '';
   position: absolute;
   inset: 0 auto 0 0;
-  width: 6px;
+  width: 5px;
   background: linear-gradient(180deg, var(--accent), #e6a15d 55%, var(--teal));
 }
 
-.search-card__intro {
-  max-width: 720px;
-  margin-bottom: 22px;
-}
-
-.eyebrow {
-  display: inline-block;
-  margin-bottom: 8px;
-  color: var(--accent);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-}
-
-h2 {
-  margin: 0 0 8px;
-  font-size: clamp(22px, 2.6vw, 30px);
+.search-title {
+  margin: 0 0 14px;
+  font-size: clamp(18px, 2vw, 22px);
   font-weight: 700;
   letter-spacing: -0.01em;
 }
 
-.search-card__intro p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.7;
+.query-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 12px;
 }
 
-.field-row {
+.more-options {
+  margin-top: 8px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.more-options summary {
+  cursor: pointer;
+}
+
+.more-grid {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-  gap: 20px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 8px;
 }
 
 .input-icon {
   color: var(--muted);
 }
 
+.search-form ::ng-deep .ant-input,
+.search-form ::ng-deep .ant-input-affix-wrapper {
+  border-radius: 14px;
+}
+
 .search-form .ant-form-item {
-  margin-bottom: 16px;
+  margin-bottom: 0;
 }
 
-.image-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 14px 16px;
-  background: var(--surface-soft);
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--radius-md);
+.search-form ::ng-deep .ant-form-item-label {
+  padding-bottom: 2px;
 }
 
-.image-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.image-title {
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.image-hint {
+.search-form ::ng-deep .ant-form-item-label > label {
+  height: auto;
   color: var(--muted);
   font-size: 12px;
 }
 
-.image-actions {
-  flex-shrink: 0;
+.options-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  margin-top: 12px;
 }
 
-.upload-button {
+.platform-picker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  flex: 1;
+  min-width: 260px;
+  padding: 7px 12px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.platform-all {
+  font-weight: 600;
+}
+
+.platform-option--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.platform-picker ::ng-deep .ant-checkbox-checked .ant-checkbox-inner,
+.platform-picker ::ng-deep .ant-checkbox-indeterminate .ant-checkbox-inner {
+  background-color: var(--teal);
+  border-color: var(--teal);
+}
+
+.platform-picker ::ng-deep .ant-checkbox-wrapper:not(.ant-checkbox-wrapper-disabled):hover .ant-checkbox-inner {
+  border-color: var(--teal);
+}
+
+.dropzone {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 16px;
-  background: var(--surface);
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  color: var(--ink-soft);
-  font-size: 13px;
-  font-weight: 600;
+  min-width: 220px;
+  max-width: 320px;
+  height: 40px;
+  padding: 0 12px;
+  background: var(--surface-soft);
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 12px;
   cursor: pointer;
-  transition: border-color 0.18s ease, color 0.18s ease, transform 0.18s ease;
+  transition: border-color 0.18s ease, background 0.18s ease;
 }
 
-.upload-button:hover {
+.dropzone:hover,
+.dropzone--active {
   border-color: var(--teal);
-  color: var(--teal);
-  transform: translateY(-1px);
+  background: var(--teal-soft);
 }
 
-.upload-button input {
+.dropzone--filled {
+  border-style: solid;
+}
+
+.dropzone input {
   display: none;
 }
 
-.preview {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+.dropzone__icon {
+  font-size: 16px;
 }
 
-.preview img {
-  width: 54px;
-  height: 54px;
-  object-fit: cover;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-}
-
-.preview__meta {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  max-width: 180px;
-}
-
-.preview__name {
+.dropzone__text {
   overflow: hidden;
-  max-width: 180px;
-  color: var(--ink-soft);
-  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.form-alert {
-  margin-top: 10px;
+.dropzone__thumb {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--line);
 }
 
-.submit-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  margin-top: 20px;
-  padding-top: 20px;
-  border-top: 1px solid var(--line);
+.dropzone__name {
+  flex: 1;
+  overflow: hidden;
+  color: var(--ink-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.submit-note {
+.dropzone__remove {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.6;
+  cursor: pointer;
+}
+
+.dropzone__remove:hover {
+  background: var(--line);
+  color: var(--ink);
 }
 
 .submit-button {
-  min-width: 150px;
-  height: 44px;
+  height: 40px;
+  padding: 0 26px;
   border-radius: 999px;
   font-weight: 600;
 }
 
-@media (max-width: 720px) {
-  .search-card {
-    padding: 24px 20px;
-  }
+.ant-alert.form-alert {
+  margin-top: 10px;
+}
 
-  .field-row {
+@media (max-width: 860px) {
+  .query-row {
     grid-template-columns: 1fr;
-    gap: 0;
   }
 
-  .image-row,
-  .submit-row {
-    flex-direction: column;
-    align-items: flex-start;
+  .more-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .search-card {
+    padding: 16px;
+  }
+
+  .dropzone {
+    flex: 1;
+    max-width: none;
   }
 
   .submit-button {
-    width: 100%;
+    flex: 1;
   }
 }

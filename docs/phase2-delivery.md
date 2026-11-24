@@ -91,21 +91,24 @@ THIRD_PARTY_MAX_AI_MATCHES_PER_PLATFORM=6
 |---|---|
 | 淘宝 `taobao_tbk` | `NOT_CONFIGURED`（无 Key） |
 | 拼多多 `pdd_ddk` | `NOT_CONFIGURED`（无 Key） |
-| 抖音 `qovia` | `NOT_CONFIGURED`（无 Key） |
-| 抖音 `playwright` | `FAILED / PARSE_FAILED`（未登录） |
-| 小红书 `okdata` | `NOT_CONFIGURED`（无 Key） |
-| 小红书 `playwright` | `BLOCKED / BLOCKED_BY_PLATFORM`（安全限制） |
+| 抖音 `qovia` | `SUCCESS`：5 条真实商品（试用 Key） |
+| 抖音 `playwright` | `BLOCKED / CAPTCHA_REQUIRED`（已登录，但搜索页返回验证码中间页） |
+| 小红书 `okdata` | `SUCCESS`：5 条真实商品（试用 Key） |
+| 小红书 `playwright` | `FAILED / PARSE_FAILED`（已登录，但普通搜索只返回笔记） |
 
 - 一次搜索实际创建 6 个渠道任务，渠道独立执行与记录。
-- 前端渠道卡片、多来源价格对比已验证（一次性数据：Qovia ¥9.00 / Playwright ¥9.50，显示价格不一致）；测试数据已删除。
-- 后端单元测试 37 项通过，其中 Qovia/OKData 使用官方示例响应验证字段映射。
-- **未进行真实商品价格核对**：缺少 Qovia/OKData Key、淘宝/拼多多凭证以及抖音/小红书登录账号。
-- DeepSeek Key 已配置，但本次没有真实候选商品，内容识别与同款判断未做 live 验证。
+- Qovia/OKData 已用试用 Key 实际返回商品：标题、图片、价格、店铺、来源与地区说明已入库并在前端展示。
+- 抖音/小红书 Playwright 已登录：抖音因验证码中间页被标记为 `BLOCKED/CAPTCHA_REQUIRED`，小红书因仅返回笔记被标记为 `FAILED/PARSE_FAILED`；平台聚合为 `PARTIAL_SUCCESS`。
+- 第三方搜索接口没有 SKU/描述：v1 时期 DeepSeek 将 10 条真实候选全部标记为 `UNCERTAIN`，未误判 MATCH；v2 会先按类别、系列与标题判断，只有目标款式无法确认时才保持 `UNCERTAIN`。
+- 前端渠道卡片、真实商品卡片、价格来源、地区说明、待确认区域已验证；多来源价格对比另用一次性数据验证（Qovia ¥9.00 / Playwright ¥9.50），测试数据已删除。
+- 后端单元测试 48 项通过，其中 Qovia/OKData 使用官方示例响应验证字段映射。
+- **未进行真实 MATCH/价格人工核对**：需要带 SKU/描述的商品详情数据；淘宝/拼多多凭证也未配置。
 
 ## 7. 已知问题与后续
 
 - Qovia、OKData 字段均为 Beta/Preview，需持续按官方文档维护解析器。
 - Qovia 未声明数据地区；OKData 为海外视角，价格需人工核对大陆实际价格。
+- 第三方搜索接口只有标题级信息，缺少 SKU/描述；v2 会区分候选相关性与匹配状态：系列匹配但目标款式未知时返回 `UNCERTAIN`，并建议补充 SKU，而不是直接排除。
 - 跨来源同款判断目前只在弱匹配且 AI 可用时调用；未配置 AI 时不会合并重复商品。
-- 当前 Playwright 只解析列表页，未进入详情页提取 SKU 与精确 SKU 价格。
-- 真实测试仍需：第三方 Key、淘宝/拼多多凭证、抖音/小红书登录、3–5 款真实贴纸人工核对记录。
+- 当前 Playwright 只解析列表页；抖音被验证码限制，小红书仅返回笔记，未进入详情页提取 SKU 与精确 SKU 价格。
+- 真实测试仍需：带 SKU 的商品详情、淘宝/拼多多凭证、3–5 款真实贴纸人工核对记录。

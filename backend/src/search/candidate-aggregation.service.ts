@@ -1,20 +1,25 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import {
+  ClassificationOutcome,
   ProductClassifierService,
   TargetDescriptor,
 } from '../ai/product-classifier.service';
 import { SameProductDescriptor, SameProductService } from '../ai/same-product.service';
 import {
-  MatchStatusEnum,
+  AiStatusEnum,
+  ManualDecisionEnum,
   ObservationSourceEnum,
   PlatformEnum,
+  PriceVerificationStatusEnum,
   ProviderKeyEnum,
+  SkuVerificationStatusEnum,
   SourceTypeEnum,
 } from '../common/enums';
 import { NormalizedProduct } from '../common/interfaces/normalized-product.interface';
 import { SkuOption } from '../common/interfaces/price.interface';
+import { mergeWholesale } from '../common/utils/wholesale.util';
 import {
   isAmbiguousSameProduct,
   strongProductMatch,
@@ -22,12 +27,14 @@ import {
   titleSimilarity,
   imageOverlap,
 } from '../common/utils/product-dedupe.util';
+import { normalizeTargetText } from '../common/utils/text.util';
 import { sanitizeRawData } from '../common/utils/sanitize.util';
 import {
   PlatformSearchTask,
   ProductCandidate,
   ProductMatchResult,
   ProductObservation,
+  SearchRun,
 } from '../entities';
 
 export interface AiMatchBudget {
@@ -45,8 +52,7 @@ function toDate(value: string | Date): Date {
   return Number.isNaN(date.getTime()) ? new Date() : date;
 }
 
-function mergeSkuOptions(existing: SkuOption[], incoming: SkuOption[]): SkuOption[] {
-  const result = [...existing];
+function mergeSkuOptions(existing: SkuOption[], incoming: SkuOption[]): SkuOption[] {  const result = [...existing];
   const keys = new Set(
     existing.map((sku, index) => `${sku.skuId ?? ''}|${sku.name}|${index}`),
   );
@@ -58,6 +64,20 @@ function mergeSkuOptions(existing: SkuOption[], incoming: SkuOption[]): SkuOptio
     result.push(sku);
   }
   return result.slice(0, 100);
+}
+
+/**
+ * 详情补充：写入一条独立的详情观察记录，只填补候选缺失字段，
+ * 不覆盖搜索结果价格，也不因详情失败影响原结果。
+ */
+
+function withSourceKeyword(
+  product: NormalizedProduct,
+): Record<string, unknown> | null {
+  const raw = { ...(product.rawData ?? {}) };
+  if (product.sourceKeyword) raw['source_keyword'] = product.sourceKeyword;
+  if (Object.keys(raw).length === 0) return null;
+  return sanitizeRawData(raw) as Record<string, unknown>;
 }
 
 @Injectable()
@@ -180,53 +200,242 @@ export class CandidateAggregationService {
     searchRunId: string,
     platform: PlatformEnum,
     target: TargetDescriptor,
+    concurrency = 1,
+    shouldStop?: () => boolean,
   ): Promise<{ classified: number; failed: number }> {
-    const candidates = await this.loadCandidates(searchRunId, platform);
+    const candidates = (
+      await this.loadCandidates(searchRunId, platform)
+    ).filter((candidate) => !candidate.matchResult);
     let classified = 0;
     let failed = 0;
-    for (const candidate of candidates) {
-      if (candidate.matchResult) continue;
-      const representative = this.representativeProduct(candidate);
-      try {
-        const outcome = await this.classifier.classify(
-          target,
-          representative,
-          candidate.id,
-        );
-        const match = this.matchRepo.create({
-          candidateId: candidate.id,
-          matchStatus: outcome.matchStatus,
-          matchType: outcome.matchType,
-          confidence: outcome.confidence,
-          summary: outcome.summary,
-          reason: outcome.reason,
-          matchedContents: outcome.matchedContents,
-          matchedSkuIds: outcome.matchedSkuIds,
-          skuDecisions: outcome.skuDecisions,
-          evidence: outcome.evidence,
-          aiStatus: outcome.aiStatus,
-          aiModel: outcome.model,
-          aiRawResponse: outcome.rawResponse,
-          aiError: outcome.error,
-          needsManualReview: outcome.needsManualReview,
-          classifiedAt: new Date(),
-        });
-        await this.matchRepo.save(match);
-        candidate.matchResult = match;
-        classified += 1;
-        if (outcome.matchStatus === MatchStatusEnum.UNCERTAIN) {
-          // 识别不确定属于正常安全结果，不计为失败
+    let cursor = 0;
+    const referenceCases = await this.loadReferenceCases(
+      searchRunId,
+      target,
+      platform,
+    );
+    const workerCount = Math.min(
+      Math.max(1, concurrency),
+      Math.max(1, candidates.length),
+    );
+
+    const worker = async (): Promise<void> => {
+      while (true) {
+        if (shouldStop?.()) break;
+        const index = cursor;
+        cursor += 1;
+        if (index >= candidates.length) break;
+        const candidate = candidates[index];
+        try {
+          const representative = this.representativeProduct(candidate);
+          const outcome = await this.classifier.classify(
+            target,
+            representative,
+            candidate.id,
+            { referenceCases },
+          );
+          const match = this.matchRepo.create({ candidateId: candidate.id });
+          this.applyOutcomeToMatch(match, outcome);
+          await this.applyHistoricalManualDecision(candidate, match);
+          await this.matchRepo.save(match);
+          candidate.matchResult = match;
+          classified += 1;
+        } catch (error) {
+          failed += 1;
+          this.logger.warn(
+            `候选商品识别保存失败 candidate=${candidate.id}：${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
         }
-      } catch (error) {
-        failed += 1;
-        this.logger.warn(
-          `候选商品识别保存失败 candidate=${candidate.id}：${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
       }
-    }
+    };
+
+    await Promise.all(Array.from({ length: workerCount }, () => worker()));
     return { classified, failed };
+  }
+
+  /**
+   * 详情补充后重新识别：用包含详情 SKU/描述的候选再次调用 AI，
+   * 并更新已有 matchResult，不新建重复记录。
+   */
+  async reclassifyCandidate(
+    candidate: ProductCandidate,
+    target: TargetDescriptor,
+  ): Promise<ClassificationOutcome> {
+    const representative = this.representativeProduct(candidate);
+    const outcome = await this.classifier.classify(
+      target,
+      representative,
+      candidate.id,
+      { detailEnriched: true },
+    );
+
+    let match = candidate.matchResult;
+    if (!match) {
+      match = this.matchRepo.create({ candidateId: candidate.id });
+      candidate.matchResult = match;
+    }
+
+    if (outcome.aiStatus !== AiStatusEnum.OK) {
+      // 二次识别失败时保留第一次的有效结论，只记录警告和核验失败。
+      match.safetyWarnings = [
+        ...(match.safetyWarnings ?? []),
+        `详情补充后的 SKU 识别失败：${outcome.error ?? '未知错误'}`,
+      ];
+      match.skuVerificationStatus = SkuVerificationStatusEnum.FAILED;
+      await this.matchRepo.save(match);
+      return outcome;
+    }
+
+    this.applyOutcomeToMatch(match, outcome);
+    await this.applyHistoricalManualDecision(candidate, match);
+    await this.matchRepo.save(match);
+    return outcome;
+  }
+
+  /**
+   * 完全相同商品（平台 ID、标题、SKU 与主图未变化）可以复用历史人工判断；
+   * 店铺不同或内容变化时不自动继承。
+   */
+  private async applyHistoricalManualDecision(
+    candidate: ProductCandidate,
+    match: ProductMatchResult,
+  ): Promise<void> {
+    if (match.manualDecision !== ManualDecisionEnum.PENDING) return;
+    if (!candidate.platformProductId) return;
+
+    const previousCandidates = await this.candidateRepo.find({
+      where: {
+        platform: candidate.platform,
+        platformProductId: candidate.platformProductId,
+      },
+      relations: { matchResult: true },
+      order: { collectedAt: 'DESC' },
+      take: 10,
+    });
+    const currentSkus = JSON.stringify(candidate.skuData ?? []);
+    const currentImages = JSON.stringify(candidate.imageUrls ?? []);
+    const reusable = previousCandidates.find((item) => {
+      if (item.id === candidate.id) return false;
+      if (!item.matchResult) return false;
+      if (item.matchResult.manualDecision === ManualDecisionEnum.PENDING) return false;
+      if (normalizeTargetText(item.title) !== normalizeTargetText(candidate.title)) {
+        return false;
+      }
+      if (JSON.stringify(item.skuData ?? []) !== currentSkus) return false;
+      if (JSON.stringify(item.imageUrls ?? []) !== currentImages) return false;
+      return true;
+    });
+    if (!reusable?.matchResult) return;
+
+    match.manualDecision = reusable.matchResult.manualDecision;
+    match.manualNote =
+      [reusable.matchResult.manualNote, '复用历史人工确认']
+        .filter(Boolean)
+        .join('；') || null;
+    match.manualSkuDecisions = reusable.matchResult.manualSkuDecisions ?? null;
+    match.reviewedAt = new Date();
+  }
+
+  /** 取同一目标/系列的历史人工确认，作为 AI 的辅助参考（最多 2 条）。 */
+  private async loadReferenceCases(
+    searchRunId: string,
+    target: TargetDescriptor,
+    platform: PlatformEnum,
+  ): Promise<
+    Array<{
+      title: string;
+      platform: string;
+      manualDecision: string;
+      note?: string | null;
+    }>
+  > {
+    const runRepo = this.candidateRepo.manager.getRepository(SearchRun);
+    const runs = await runRepo.find({
+      order: { startedAt: 'DESC' },
+      take: 50,
+    });
+    const targetName = normalizeTargetText(target.name);
+    const targetSeries = normalizeTargetText(target.seriesName ?? '');
+    const runIds = runs
+      .filter(
+        (run) =>
+          run.id !== searchRunId &&
+          normalizeTargetText(run.targetName) === targetName &&
+          normalizeTargetText(run.seriesName ?? '') === targetSeries,
+      )
+      .map((run) => run.id);
+    if (runIds.length === 0) return [];
+
+    const candidates = await this.candidateRepo.find({
+      where: { platform, searchRunId: In(runIds) },
+      relations: { matchResult: true },
+      order: { collectedAt: 'DESC' },
+      take: 10,
+    });
+    return candidates
+      .filter(
+        (candidate) =>
+          candidate.matchResult &&
+          candidate.matchResult.manualDecision !== ManualDecisionEnum.PENDING,
+      )
+      .slice(0, 2)
+      .map((candidate) => ({
+        title: candidate.title,
+        platform: candidate.platform,
+        manualDecision: candidate.matchResult!.manualDecision,
+        note: candidate.matchResult!.manualNote,
+      }));
+  }
+
+  /** 详情失败或未返回 SKU 时更新核验状态，不覆盖已有匹配结论。 */
+  async updateVerificationStatus(
+    candidate: ProductCandidate,
+    skuStatus: SkuVerificationStatusEnum,
+    priceStatus: PriceVerificationStatusEnum,
+    warning?: string,
+  ): Promise<void> {
+    const match = candidate.matchResult;
+    if (!match) return;
+    match.skuVerificationStatus = skuStatus;
+    match.priceVerificationStatus = priceStatus;
+    if (warning) {
+      match.safetyWarnings = [...(match.safetyWarnings ?? []), warning];
+    }
+    await this.matchRepo.save(match);
+  }
+
+  private applyOutcomeToMatch(
+    match: ProductMatchResult,
+    outcome: ClassificationOutcome,
+  ): void {    match.matchStatus = outcome.matchStatus;
+    match.matchType = outcome.matchType;
+    match.candidateRelevance = outcome.candidateRelevance;
+    match.categoryMatch = outcome.categoryMatch;
+    match.seriesMatch = outcome.seriesMatch;
+    match.targetItemMatch = outcome.targetItemMatch;
+    match.visualMatch = outcome.visualMatch;
+    match.confidence = outcome.confidence;
+    match.summary = outcome.summary;
+    match.reason = outcome.reason;
+    match.matchedContents = outcome.matchedContents;
+    match.matchedSkuIds = outcome.matchedSkuIds;
+    match.skuDecisions = outcome.skuDecisions;
+    match.evidence = outcome.evidence;
+    match.nextAction = outcome.nextAction;
+    match.rawMatchStatus = outcome.rawMatchStatus;
+    match.rawConfidence = outcome.rawConfidence;
+    match.safetyWarnings = outcome.safetyWarnings;
+    match.safetyBlockers = outcome.safetyBlockers;
+    match.skuVerificationStatus = outcome.skuVerificationStatus;
+    match.priceVerificationStatus = outcome.priceVerificationStatus;
+    match.aiStatus = outcome.aiStatus;
+    match.aiModel = outcome.model;
+    match.aiRawResponse = outcome.rawResponse;
+    match.aiError = outcome.error;
+    match.needsManualReview = outcome.needsManualReview;
+    match.classifiedAt = new Date();
   }
 
   private async createCandidate(
@@ -246,8 +455,9 @@ export class CandidateAggregationService {
       skuData: product.skuOptions ?? [],
       priceData: product.price ?? null,
       groupPriceData: product.groupPrice ?? null,
+      wholesalePriceData: product.wholesalePrice ?? null,
       sourceType: product.sourceType,
-      rawData: (sanitizeRawData(product.rawData) as Record<string, unknown>) ?? null,
+      rawData: withSourceKeyword(product),
       collectedAt: toDate(product.collectedAt),
       observations: [],
     });
@@ -257,6 +467,7 @@ export class CandidateAggregationService {
   private async mergeCandidate(
     candidate: ProductCandidate,
     product: NormalizedProduct,
+    preferWholesale = false,
   ): Promise<void> {
     if (!candidate.shopName && product.shopName) candidate.shopName = product.shopName;
     if (
@@ -269,10 +480,17 @@ export class CandidateAggregationService {
     if (!candidate.groupPriceData && product.groupPrice) {
       candidate.groupPriceData = product.groupPrice;
     }
-    if (!candidate.rawData && product.rawData) {
-      candidate.rawData = sanitizeRawData(product.rawData) as Record<string, unknown>;
+    if (product.wholesalePrice) {
+      candidate.wholesalePriceData = preferWholesale
+        ? product.wholesalePrice
+        : candidate.wholesalePriceData
+          ? mergeWholesale(candidate.wholesalePriceData, product.wholesalePrice)
+          : product.wholesalePrice;
     }
-    candidate.imageUrls = [
+    const rawData = withSourceKeyword(product);
+    if (!candidate.rawData && rawData) {
+      candidate.rawData = rawData;
+    }    candidate.imageUrls = [
       ...new Set([
         ...(candidate.imageUrls ?? []),
         ...(product.imageUrls ?? []),
@@ -312,16 +530,43 @@ export class CandidateAggregationService {
       priceData: product.price ?? null,
       originalPriceData: product.originalPrice ?? null,
       groupPriceData: product.groupPrice ?? null,
+      wholesalePriceData: product.wholesalePrice ?? null,
       salesText: product.salesText?.slice(0, 100) ?? null,
       rating: typeof product.rating === 'number' ? product.rating : null,
       region: product.region?.slice(0, 50) ?? null,
       regionNote: product.regionNote ?? null,
       matchReason,
-      rawData: (sanitizeRawData(product.rawData) as Record<string, unknown>) ?? null,
+      rawData: withSourceKeyword(product),
       observedAt,
       collectedAt: new Date(),
     });
     return this.observationRepo.save(observation);
+  }
+
+  /**
+   * 详情补充：写入一条独立的详情观察记录，只填补候选缺失字段，
+   * 不覆盖搜索结果价格，也不因详情失败影响原结果。
+   */
+  async recordDetail(
+    searchRunId: string,
+    task: PlatformSearchTask,
+    candidate: ProductCandidate,
+    product: NormalizedProduct,
+  ): Promise<ProductObservation> {
+    await this.mergeCandidate(candidate, product, true);
+    const observation = await this.createObservation(
+      searchRunId,
+      task,
+      candidate,
+      product,
+      'detail_enrichment',
+    );
+    candidate.observations = [...(candidate.observations ?? []), observation];
+    return observation;
+  }
+
+  representative(candidate: ProductCandidate): NormalizedProduct {
+    return this.representativeProduct(candidate);
   }
 
   private representativeProduct(candidate: ProductCandidate): NormalizedProduct {
@@ -350,10 +595,15 @@ export class CandidateAggregationService {
       skuOptions: candidate.skuData ?? [],
       price: candidate.priceData ?? undefined,
       groupPrice: candidate.groupPriceData,
+      wholesalePrice: candidate.wholesalePriceData,
       sourceType: candidate.sourceType,
       source: observation?.source,
       providerKey: (observation?.provider as ProviderKeyEnum | undefined) ?? undefined,
       sourceProductId: observation?.sourceProductId ?? undefined,
+      sourceKeyword:
+        typeof candidate.rawData?.['source_keyword'] === 'string'
+          ? (candidate.rawData['source_keyword'] as string)
+          : undefined,
       collectedAt: candidate.collectedAt.toISOString(),
     };
   }

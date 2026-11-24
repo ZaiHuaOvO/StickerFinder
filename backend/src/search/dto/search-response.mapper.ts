@@ -1,19 +1,31 @@
 import {
+  CandidateRelevanceEnum,
   ManualDecisionEnum,
+  MatchAssessmentEnum,
   MatchStatusEnum,
+  NextActionEnum,
   ObservationSourceEnum,
   PlatformEnum,
   PlatformStatusEnum,
   PlatformTaskStatusEnum,
+  PriceVerificationStatusEnum,
+  SkuVerificationStatusEnum,
   SourceTypeEnum,
+  VisualMatchEnum,
 } from '../../common/enums';
 import { PriceInfo, SkuOption } from '../../common/interfaces/price.interface';
+import { WholesalePriceInfo } from '../../common/interfaces/wholesale-price.interface';
+import { ManualVerificationState } from '../../common/interfaces/manual-verification.interface';
 import {
   PROVIDER_LABELS,
   channelsForPlatform,
 } from '../../common/platform-channels';
 import { aggregatePlatformStatus } from '../../common/utils/platform-status.util';
-import type { SkuDecision } from '../../entities/product-match-result.entity';
+import type {
+  EvidenceEntry,
+  SkuDecision,
+  SkuManualDecision,
+} from '../../entities/product-match-result.entity';
 import {
   PlatformSearchTask,
   ProductCandidate,
@@ -25,16 +37,29 @@ export interface MatchDto {
   aiStatus: string;
   matchStatus: MatchStatusEnum;
   matchType: string | null;
+  candidateRelevance: CandidateRelevanceEnum | null;
+  categoryMatch: MatchAssessmentEnum | null;
+  seriesMatch: MatchAssessmentEnum | null;
+  targetItemMatch: MatchAssessmentEnum | null;
+  visualMatch: VisualMatchEnum | null;
   confidence: number | null;
   summary: string | null;
   reason: string | null;
   matchedContents: string[];
   matchedSkuIds: string[];
   skuDecisions: SkuDecision[];
-  evidence: string[];
+  evidence: EvidenceEntry[];
+  nextAction: NextActionEnum | null;
+  rawMatchStatus: MatchStatusEnum | null;
+  rawConfidence: number | null;
+  safetyWarnings: string[];
+  safetyBlockers: string[];
+  skuVerificationStatus: SkuVerificationStatusEnum;
+  priceVerificationStatus: PriceVerificationStatusEnum;
   needsManualReview: boolean;
   manualDecision: ManualDecisionEnum;
   manualNote: string | null;
+  manualSkuDecisions: SkuManualDecision[];
   reviewedAt: Date | null;
   aiModel: string | null;
   aiError: string | null;
@@ -54,6 +79,8 @@ export interface ObservationDto {
   price: PriceInfo | null;
   originalPrice: PriceInfo | null;
   groupPrice: PriceInfo | null;
+  /** 1688 批发采购价，独立于零售 price */
+  wholesalePrice: WholesalePriceInfo | null;
   salesText: string | null;
   rating: number | null;
   region: string | null;
@@ -76,6 +103,7 @@ export interface ProductDto {
   skuOptions: SkuOption[];
   price: PriceInfo | null;
   groupPrice: PriceInfo | null;
+  wholesalePrice: WholesalePriceInfo | null;
   sourceType: string;
   collectedAt: Date;
   effectiveMatchStatus: MatchStatusEnum;
@@ -96,6 +124,15 @@ export interface ChannelResultDto {
   errorCode: string | null;
   errorMessage: string | null;
   note: string | null;
+  /** 实际收费 API 请求次数（服务商响应为准） */
+  apiRequestCount: number;
+  /** 服务商 billing 实际扣费；null 表示未返回 billing */
+  chargedUsd: number | null;
+  lastRequestId: string | null;
+  /** 等待人工验证时保存的关键词、目标 URL、Profile 与进度 */
+  manualVerification: ManualVerificationState | null;
+  /** 当前是否有该平台的可见验证浏览器窗口处于打开状态 */
+  manualBrowserOpen: boolean;
   startedAt: Date | null;
   completedAt: Date | null;
   durationMs: number | null;
@@ -117,6 +154,7 @@ export interface PlatformResultDto {
   channels: ChannelResultDto[];
   products: ProductDto[];
   uncertainProducts: ProductDto[];
+  excludedProducts: ProductDto[];
 }
 
 export interface SearchDetailDto {
@@ -125,6 +163,8 @@ export interface SearchDetailDto {
   targetName: string;
   seriesName: string | null;
   aliases: string[];
+  seriesAliases: string[];
+  brandNames: string[];
   referenceImageProvided: boolean;
   errorMessage: string | null;
   startedAt: Date;
@@ -168,6 +208,7 @@ function toObservationDto(observation: ProductObservation): ObservationDto {
     price: observation.priceData,
     originalPrice: observation.originalPriceData,
     groupPrice: observation.groupPriceData,
+    wholesalePrice: observation.wholesalePriceData,
     salesText: observation.salesText,
     rating: observation.rating,
     region: observation.region,
@@ -189,6 +230,36 @@ function hasPriceConflict(observations: ObservationDto[]): boolean {
   return new Set(values).size > 1;
 }
 
+function normalizeEvidence(entries: unknown): EvidenceEntry[] {
+  if (!Array.isArray(entries)) return [];
+  const allowed = new Set(['title', 'description', 'sku', 'image']);
+  const normalized: EvidenceEntry[] = [];
+  for (const entry of entries) {
+    if (typeof entry === 'string' && entry.trim()) {
+      normalized.push({
+        sourceField: 'title',
+        content: entry,
+        interpretation: '历史数据（旧格式）',
+      });
+      continue;
+    }
+    if (entry && typeof entry === 'object') {
+      const record = entry as Record<string, unknown>;
+      if (typeof record.content !== 'string' || !record.content.trim()) continue;
+      if (typeof record.sourceField !== 'string' || !allowed.has(record.sourceField)) {
+        continue;
+      }
+      normalized.push({
+        sourceField: record.sourceField as EvidenceEntry['sourceField'],
+        content: record.content,
+        interpretation:
+          typeof record.interpretation === 'string' ? record.interpretation : '',
+      });
+    }
+  }
+  return normalized;
+}
+
 export function toProductDto(candidate: ProductCandidate): ProductDto {
   const result = candidate.matchResult;
   const observations = [...(candidate.observations ?? [])]
@@ -199,16 +270,31 @@ export function toProductDto(candidate: ProductCandidate): ProductDto {
         aiStatus: result.aiStatus,
         matchStatus: result.matchStatus,
         matchType: result.matchType,
+        candidateRelevance: result.candidateRelevance,
+        categoryMatch: result.categoryMatch,
+        seriesMatch: result.seriesMatch,
+        targetItemMatch: result.targetItemMatch,
+        visualMatch: result.visualMatch,
         confidence: result.confidence,
         summary: result.summary,
         reason: result.reason,
         matchedContents: result.matchedContents ?? [],
         matchedSkuIds: result.matchedSkuIds ?? [],
         skuDecisions: result.skuDecisions ?? [],
-        evidence: result.evidence ?? [],
+        evidence: normalizeEvidence(result.evidence),
+        nextAction: result.nextAction,
+        rawMatchStatus: result.rawMatchStatus ?? null,
+        rawConfidence: result.rawConfidence ?? null,
+        safetyWarnings: result.safetyWarnings ?? [],
+        safetyBlockers: result.safetyBlockers ?? [],
+        skuVerificationStatus:
+          result.skuVerificationStatus ?? SkuVerificationStatusEnum.PENDING,
+        priceVerificationStatus:
+          result.priceVerificationStatus ?? PriceVerificationStatusEnum.PENDING,
         needsManualReview: result.needsManualReview,
         manualDecision: result.manualDecision,
         manualNote: result.manualNote,
+        manualSkuDecisions: result.manualSkuDecisions ?? [],
         reviewedAt: result.reviewedAt,
         aiModel: result.aiModel,
         aiError: result.aiError,
@@ -227,6 +313,7 @@ export function toProductDto(candidate: ProductCandidate): ProductDto {
     skuOptions: candidate.skuData ?? [],
     price: candidate.priceData,
     groupPrice: candidate.groupPriceData,
+    wholesalePrice: candidate.wholesalePriceData,
     sourceType: candidate.sourceType,
     collectedAt: candidate.collectedAt,
     effectiveMatchStatus: effectiveMatchStatus(match),
@@ -241,7 +328,10 @@ function taskDuration(task: PlatformSearchTask): number | null {
   return Math.max(0, task.completedAt.getTime() - task.startedAt.getTime());
 }
 
-function toChannelDto(task: PlatformSearchTask): ChannelResultDto {
+function toChannelDto(
+  task: PlatformSearchTask,
+  manualBrowserOpen: boolean,
+): ChannelResultDto {
   return {
     taskId: task.id,
     provider: task.provider,
@@ -264,16 +354,47 @@ function toChannelDto(task: PlatformSearchTask): ChannelResultDto {
     errorCode: task.errorCode,
     errorMessage: task.errorMessage,
     note: task.note,
+    apiRequestCount: task.apiRequestCount ?? 0,
+    chargedUsd: task.chargedUsd ?? null,
+    lastRequestId: task.lastRequestId ?? null,
+    manualVerification: task.manualVerification ?? null,
+    manualBrowserOpen:
+      manualBrowserOpen &&
+      task.status === PlatformTaskStatusEnum.WAITING_MANUAL_VERIFICATION,
     startedAt: task.startedAt,
     completedAt: task.completedAt,
     durationMs: taskDuration(task),
   };
 }
 
+function relevanceRank(value: CandidateRelevanceEnum | null | undefined): number {
+  switch (value) {
+    case CandidateRelevanceEnum.HIGH:
+      return 3;
+    case CandidateRelevanceEnum.MEDIUM:
+      return 2;
+    case CandidateRelevanceEnum.LOW:
+      return 1;
+    case CandidateRelevanceEnum.NONE:
+      return 0;
+    default:
+      return -1;
+  }
+}
+
+function byRelevanceThenConfidence(a: ProductDto, b: ProductDto): number {
+  const byRelevance =
+    relevanceRank(b.match?.candidateRelevance) -
+    relevanceRank(a.match?.candidateRelevance);
+  if (byRelevance !== 0) return byRelevance;
+  return (b.match?.confidence ?? -1) - (a.match?.confidence ?? -1);
+}
+
 export function toPlatformResultDto(
   platform: PlatformEnum,
   tasks: PlatformSearchTask[],
   candidates: ProductCandidate[],
+  manualBrowserOpen = false,
 ): PlatformResultDto {
   const channelOrder = channelsForPlatform(platform).map((channel) => channel.provider);
   const orderedTasks = [...tasks].sort((a, b) => {
@@ -283,7 +404,7 @@ export function toPlatformResultDto(
   });
   const products = candidates
     .map(toProductDto)
-    .sort((a, b) => (b.match?.confidence ?? -1) - (a.match?.confidence ?? -1));
+    .sort(byRelevanceThenConfidence);
 
   const matched = products.filter(
     (product) => product.effectiveMatchStatus === MatchStatusEnum.MATCH,
@@ -294,7 +415,7 @@ export function toPlatformResultDto(
   const excluded = products.filter(
     (product) => product.effectiveMatchStatus === MatchStatusEnum.NO_MATCH,
   );
-  const channels = orderedTasks.map(toChannelDto);
+  const channels = orderedTasks.map((task) => toChannelDto(task, manualBrowserOpen));
   const status = aggregatePlatformStatus(tasks);
   const startedTimes = tasks
     .map((task) => task.startedAt)
@@ -311,12 +432,17 @@ export function toPlatformResultDto(
   const notConfigured = tasks.find(
     (task) => task.status === PlatformTaskStatusEnum.NOT_CONFIGURED,
   );
+  const waitingTask = tasks.find(
+    (task) => task.status === PlatformTaskStatusEnum.WAITING_MANUAL_VERIFICATION,
+  );
   const errorTask =
     status === PlatformStatusEnum.FAILED
       ? failure
       : status === PlatformStatusEnum.NOT_CONFIGURED
         ? notConfigured
-        : undefined;
+        : status === PlatformStatusEnum.WAITING_MANUAL_VERIFICATION
+          ? waitingTask
+          : undefined;
 
   return {
     platform,
@@ -338,12 +464,16 @@ export function toPlatformResultDto(
     startedAt: startedTimes.length
       ? new Date(Math.min(...startedTimes.map((value) => value.getTime())))
       : null,
-    completedAt: completedTimes.length
-      ? new Date(Math.max(...completedTimes.map((value) => value.getTime())))
-      : null,
+    completedAt:
+      status === PlatformStatusEnum.WAITING_MANUAL_VERIFICATION
+        ? null
+        : completedTimes.length
+          ? new Date(Math.max(...completedTimes.map((value) => value.getTime())))
+          : null,
     channels,
     products: matched,
     uncertainProducts: uncertain,
+    excludedProducts: excluded,
   };
 }
 
@@ -351,6 +481,7 @@ export function toSearchDetailDto(
   run: SearchRun,
   tasks: PlatformSearchTask[],
   candidates: ProductCandidate[],
+  manualBrowserOpen: Partial<Record<PlatformEnum, boolean>> = {},
 ): SearchDetailDto {
   const byPlatform = new Map<string, ProductCandidate[]>();
   for (const candidate of candidates) {
@@ -363,14 +494,23 @@ export function toSearchDetailDto(
     PlatformEnum.TAOBAO,
     PlatformEnum.DOUYIN,
     PlatformEnum.XIAOHONGSHU,
+    PlatformEnum.ALIBABA1688,
     PlatformEnum.PINDUODUO,
-  ].map((platform) =>
-    toPlatformResultDto(
-      platform,
-      tasks.filter((task) => task.platform === platform),
-      byPlatform.get(platform) ?? [],
-    ),
-  );
+  ]
+    // 未选中的平台不创建任务，也不在结果里伪造一个 NOT_CONFIGURED 页签。
+    .filter(
+      (platform) =>
+        tasks.some((task) => task.platform === platform) ||
+        byPlatform.has(platform),
+    )
+    .map((platform) =>
+      toPlatformResultDto(
+        platform,
+        tasks.filter((task) => task.platform === platform),
+        byPlatform.get(platform) ?? [],
+        manualBrowserOpen[platform] ?? false,
+      ),
+    );
 
   return {
     searchId: run.id,
@@ -378,6 +518,8 @@ export function toSearchDetailDto(
     targetName: run.targetName,
     seriesName: run.seriesName,
     aliases: run.aliases ?? [],
+    seriesAliases: run.seriesAliases ?? [],
+    brandNames: run.brandNames ?? [],
     referenceImageProvided: Boolean(run.referenceImage),
     errorMessage: run.errorMessage,
     startedAt: run.startedAt,

@@ -239,6 +239,20 @@ describe('platform status aggregation', () => {
       PlatformStatusEnum.RUNNING,
     );
   });
+
+  it('reports cancelled platforms and keeps completed channel data', () => {
+    assert.equal(
+      aggregatePlatformStatus([task(PlatformTaskStatusEnum.CANCELLED)]),
+      PlatformStatusEnum.CANCELLED,
+    );
+    assert.equal(
+      aggregatePlatformStatus([
+        task(PlatformTaskStatusEnum.SUCCESS, 2),
+        task(PlatformTaskStatusEnum.CANCELLED),
+      ]),
+      PlatformStatusEnum.CANCELLED,
+    );
+  });
 });
 
 describe('same-product schema', () => {

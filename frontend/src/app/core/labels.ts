@@ -1,23 +1,35 @@
 import {
+  CandidateRelevance,
+  EvidenceEntry,
+  MatchAssessment,
   MatchStatus,
   MatchType,
+  NextAction,
   ObservationSource,
   Platform,
   PriceType,
+  PriceVerificationStatus,
+  SkuVerificationStatus,
   SourceType,
   TaskStatus,
+  VisualMatch,
 } from './models';
 
 export const PLATFORM_META: Record<
   Platform,
   { label: string; tone: string; providerHint: string }
 > = {
-  taobao: { label: '淘宝', tone: 'taobao', providerHint: '淘宝客 API' },
-  douyin: { label: '抖音', tone: 'douyin', providerHint: 'Qovia + Playwright' },
+  taobao: { label: '淘宝', tone: 'taobao', providerHint: 'EveryInfra / 淘宝客' },
+  douyin: { label: '抖音', tone: 'douyin', providerHint: 'EveryInfra / Qovia + Playwright' },
   xiaohongshu: {
     label: '小红书',
     tone: 'xiaohongshu',
-    providerHint: 'OKData + Playwright',
+    providerHint: 'EveryInfra / OKData + Playwright',
+  },
+  alibaba1688: {
+    label: '1688',
+    tone: 'alibaba1688',
+    providerHint: 'EveryInfra 1688（批发采购）',
   },
   pinduoduo: { label: '拼多多', tone: 'pinduoduo', providerHint: '多多进宝 API' },
 };
@@ -31,6 +43,28 @@ export const TASK_STATUS_META: Record<TaskStatus, { label: string; tone: string 
   FAILED: { label: '采集失败', tone: 'error' },
   NOT_CONFIGURED: { label: '未配置', tone: 'warning' },
   BLOCKED: { label: '需人工处理', tone: 'error' },
+  CANCELLED: { label: '已取消', tone: 'default' },
+  WAITING_MANUAL_VERIFICATION: { label: '等待人工验证', tone: 'warning' },
+};
+
+export const ERROR_CODE_LABEL: Record<string, string> = {
+  CAPTCHA_REQUIRED: '需要人工完成验证码',
+  LOGIN_REQUIRED: '需要人工登录',
+  BLOCKED_BY_PLATFORM: '平台限制访问',
+  BROWSER_PROFILE_BUSY: '浏览器用户目录被占用',
+  BROWSER_ERROR: '浏览器启动失败',
+  PLAYWRIGHT_NOT_INSTALLED: 'Playwright 未安装',
+  PARSE_FAILED: '页面解析失败',
+  GOODS_SEARCH_UNAVAILABLE: '网页无商品搜索入口',
+  PROVIDER_NOT_CONFIGURED: '渠道未配置',
+  INTERRUPTED: '任务中断',
+  EVERYINFRA_API_ERROR: 'EveryInfra 接口错误',
+  EVERYINFRA_AUTH_ERROR: 'EveryInfra 认证失败',
+  EVERYINFRA_INSUFFICIENT_BALANCE: 'EveryInfra 余额/额度不足',
+  EVERYINFRA_RATE_LIMITED: 'EveryInfra 请求频率受限',
+  EVERYINFRA_TIMEOUT: 'EveryInfra 请求超时',
+  EVERYINFRA_BAD_RESPONSE: 'EveryInfra 响应异常',
+  EVERYINFRA_IMAGE_SEARCH_DISABLED: '1688 图搜未启用',
 };
 
 export const PROVIDER_META: Record<string, { label: string }> = {
@@ -41,6 +75,10 @@ export const PROVIDER_META: Record<string, { label: string }> = {
   playwright: { label: 'Playwright 浏览器' },
   taobao_tbk: { label: '淘宝客 API' },
   pdd_ddk: { label: '多多进宝 API' },
+  everyinfra_taobao: { label: 'EveryInfra 淘宝' },
+  everyinfra_douyin: { label: 'EveryInfra 抖音' },
+  everyinfra_xiaohongshu: { label: 'EveryInfra 小红书' },
+  everyinfra_alibaba1688: { label: 'EveryInfra 1688' },
 };
 
 export const OBSERVATION_SOURCE_META: Record<ObservationSource, string> = {
@@ -62,6 +100,66 @@ export const MATCH_STATUS_META: Record<MatchStatus, { label: string; tone: strin
   MATCH: { label: '已匹配', tone: 'success' },
   NO_MATCH: { label: '不匹配', tone: 'default' },
   UNCERTAIN: { label: '待确认', tone: 'warning' },
+};
+
+export const CANDIDATE_RELEVANCE_META: Record<
+  CandidateRelevance,
+  { label: string; tone: string; description: string }
+> = {
+  HIGH: { label: '高相关', tone: 'processing', description: '商品类别与目标系列均明确匹配' },
+  MEDIUM: { label: '中相关', tone: 'warning', description: '品牌或系列有关联，仍需进一步核实' },
+  LOW: { label: '低相关', tone: 'default', description: '只有弱关键词或模糊关联' },
+  NONE: { label: '无关', tone: 'error', description: '与目标商品完全无关' },
+};
+
+export const MATCH_ASSESSMENT_META: Record<MatchAssessment, { label: string; tone: string }> = {
+  MATCH: { label: '匹配', tone: 'success' },
+  CONFLICT: { label: '冲突', tone: 'error' },
+  UNKNOWN: { label: '未知', tone: 'default' },
+};
+
+export const VISUAL_MATCH_META: Record<VisualMatch, { label: string; tone: string }> = {
+  VISUAL_EXACT: { label: '视觉一致', tone: 'success' },
+  VISUAL_SIMILAR: { label: '视觉相似', tone: 'warning' },
+  VISUAL_ABSENT: { label: '无视觉证据', tone: 'default' },
+  VISUAL_UNAVAILABLE: { label: '未做视觉比对', tone: 'default' },
+};
+
+export const NEXT_ACTION_META: Record<NextAction, { label: string; description: string }> = {
+  NONE: { label: '无需处理', description: '无需额外补充信息' },
+  FETCH_PRODUCT_DETAIL: { label: '补充商品详情', description: '需要获取商品详情' },
+  FETCH_SKU: { label: '补充 SKU', description: '需要获取 SKU 列表' },
+  FETCH_IMAGES: { label: '补充图片', description: '需要补充商品图片' },
+  MANUAL_REVIEW: { label: '人工复核', description: '机器无法继续确认，需要人工检查' },
+};
+
+export const EVIDENCE_SOURCE_LABEL: Record<EvidenceEntry['sourceField'], string> = {
+  title: '标题',
+  description: '描述',
+  sku: 'SKU',
+  image: '图片',
+};
+
+export const SKU_VERIFICATION_META: Record<
+  SkuVerificationStatus,
+  { label: string; tone: string }
+> = {
+  PENDING: { label: 'SKU 待核验', tone: 'warning' },
+  VERIFIED: { label: 'SKU 已核验', tone: 'success' },
+  PARTIAL: { label: '部分 SKU 已核验', tone: 'processing' },
+  NOT_AVAILABLE: { label: '无 SKU 信息', tone: 'default' },
+  FAILED: { label: 'SKU 核验失败', tone: 'error' },
+};
+
+export const PRICE_VERIFICATION_META: Record<
+  PriceVerificationStatus,
+  { label: string; tone: string }
+> = {
+  PENDING: { label: '价格待核验', tone: 'warning' },
+  VERIFIED: { label: '目标价已核验', tone: 'success' },
+  PARTIAL: { label: '部分价格已核验', tone: 'processing' },
+  UNVERIFIED: { label: '仅列表价', tone: 'default' },
+  FAILED: { label: '价格获取失败', tone: 'error' },
 };
 
 export const PRICE_TYPE_META: Record<PriceType, string> = {

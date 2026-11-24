@@ -9,6 +9,8 @@ import {
   SearchDetail,
   SearchRunSummary,
   UploadedImage,
+  VerificationBrowserInfo,
+  VerificationResumeInfo,
 } from './models';
 
 @Injectable({ providedIn: 'root' })
@@ -31,6 +33,15 @@ export class ApiService {
     return this.http.get<SearchDetail>(`${this.base}/searches/${searchId}`);
   }
 
+  cancelSearch(
+    searchId: string,
+  ): Observable<{ searchId: string; status: string }> {
+    return this.http.post<{ searchId: string; status: string }>(
+      `${this.base}/searches/${searchId}/cancel`,
+      {},
+    );
+  }
+
   listSearches(limit = 10): Observable<SearchRunSummary[]> {
     return this.http.get<SearchRunSummary[]>(`${this.base}/searches?limit=${limit}`);
   }
@@ -43,6 +54,35 @@ export class ApiService {
     const form = new FormData();
     form.append('file', file);
     return this.http.post<UploadedImage>(`${this.base}/uploads/reference-image`, form);
+  }
+
+  openVerificationBrowser(
+    searchId: string,
+    taskId: string,
+  ): Observable<VerificationBrowserInfo> {
+    return this.http.post<VerificationBrowserInfo>(
+      `${this.base}/searches/${searchId}/tasks/${taskId}/verification/browser`,
+      {},
+    );
+  }
+
+  closeVerificationBrowser(
+    searchId: string,
+    taskId: string,
+  ): Observable<{ closed: boolean }> {
+    return this.http.delete<{ closed: boolean }>(
+      `${this.base}/searches/${searchId}/tasks/${taskId}/verification/browser`,
+    );
+  }
+
+  resumeVerification(
+    searchId: string,
+    taskId: string,
+  ): Observable<VerificationResumeInfo> {
+    return this.http.post<VerificationResumeInfo>(
+      `${this.base}/searches/${searchId}/tasks/${taskId}/verification/resume`,
+      {},
+    );
   }
 }
 

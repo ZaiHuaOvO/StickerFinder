@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AiModule } from '../ai/ai.module';
+import { BrowserModule } from '../browser/browser.module';
 import {
   PlatformSearchTask,
   ProductCandidate,
@@ -25,6 +26,7 @@ import { SearchService } from './search.service';
     ]),
     ProvidersModule,
     AiModule,
+    BrowserModule,
   ],
   controllers: [SearchController],
   providers: [SearchService, SearchOrchestratorService, CandidateAggregationService],

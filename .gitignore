@@ -12,6 +12,7 @@ storage-state*.json
 uploads/
 logs/
 *.log
+exports/
 
 # 依赖与构建产物
 node_modules/

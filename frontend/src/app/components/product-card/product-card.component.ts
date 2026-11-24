@@ -2,26 +2,26 @@ import { Component, computed, inject, input, output, signal } from '@angular/cor
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NzMessageService } from 'ng-zorro-antd/message';
-import { NzModalModule, NzModalService } from 'ng-zorro-antd/modal';
 import { NzTagModule } from 'ng-zorro-antd/tag';
 import { NzTooltipModule } from 'ng-zorro-antd/tooltip';
 import { firstValueFrom } from 'rxjs';
 import { ApiService, apiErrorMessage } from '../../core/api.service';
 import {
-  formatConfidence,
+  CANDIDATE_RELEVANCE_META,
+  EVIDENCE_SOURCE_LABEL,
   formatDateTime,
   MANUAL_DECISION_LABEL,
+  MATCH_ASSESSMENT_META,
   MATCH_TYPE_META,
+  NEXT_ACTION_META,
   PLATFORM_META,
   PRICE_TYPE_META,
+  PRICE_VERIFICATION_META,
+  SKU_VERIFICATION_META,
   SOURCE_TYPE_META,
+  VISUAL_MATCH_META,
 } from '../../core/labels';
-import { Product, SkuDecision } from '../../core/models';
-import {
-  ReviewModalComponent,
-  ReviewModalData,
-  ReviewModalResult,
-} from '../review-modal/review-modal.component';
+import { Product, ReviewPayload } from '../../core/models';
 
 @Component({
   selector: 'app-product-card',
@@ -30,7 +30,6 @@ import {
     NzIconModule,
     NzTagModule,
     NzTooltipModule,
-    NzModalModule,
   ],
   templateUrl: './product-card.component.html',
   styleUrl: './product-card.component.less',
@@ -40,7 +39,6 @@ export class ProductCardComponent {
   readonly reviewed = output<Product>();
 
   private readonly api = inject(ApiService);
-  private readonly modal = inject(NzModalService);
   private readonly message = inject(NzMessageService);
 
   readonly imageBroken = signal(false);
@@ -62,6 +60,19 @@ export class ProductCardComponent {
       return { label: '人工确认', description: '人工核对后确认包含目标贴纸' };
     }
     return type ? MATCH_TYPE_META[type] : null;
+  });
+  readonly plainStatus = computed(() => {
+    const match = this.product().match;
+    const manual = match?.manualDecision;
+    if (manual === 'MATCH') return { label: '已确认同款', tone: 'success' };
+    if (manual === 'NO_MATCH') return { label: '已排除', tone: 'default' };
+    if (!match) return { label: '待确认', tone: 'warning' };
+    if (match.matchStatus === 'MATCH') return { label: '已确认同款', tone: 'success' };
+    if (match.matchStatus === 'NO_MATCH') return { label: '已排除', tone: 'default' };
+    if (match.seriesMatch === 'MATCH') {
+      return { label: '系列匹配，规格待确认', tone: 'warning' };
+    }
+    return { label: '待确认', tone: 'warning' };
   });
   readonly sourceLabel = computed(() => SOURCE_TYPE_META[this.product().sourceType]);
   readonly observations = computed(() => this.product().observations ?? []);
@@ -111,11 +122,53 @@ export class ProductCardComponent {
     const decision = this.product().match?.manualDecision ?? 'PENDING';
     return decision === 'PENDING' ? null : MANUAL_DECISION_LABEL[decision];
   });
-  readonly confidence = computed(() => formatConfidence(this.product().match?.confidence));
+  readonly evidenceSourceLabels = EVIDENCE_SOURCE_LABEL;
+  readonly relevanceInfo = computed(() => {
+    const relevance = this.product().match?.candidateRelevance;
+    return relevance ? CANDIDATE_RELEVANCE_META[relevance] : null;
+  });
+  readonly nextActionInfo = computed(() => {
+    const action = this.product().match?.nextAction;
+    if (!action || action === 'NONE') return null;
+    return NEXT_ACTION_META[action];
+  });
+  readonly assessmentRows = computed(() => {
+    const match = this.product().match;
+    if (!match) return [];
+    return [
+      match.categoryMatch
+        ? { label: '商品类别', meta: MATCH_ASSESSMENT_META[match.categoryMatch] }
+        : null,
+      match.seriesMatch
+        ? { label: '目标系列', meta: MATCH_ASSESSMENT_META[match.seriesMatch] }
+        : null,
+      match.targetItemMatch
+        ? { label: '目标款式', meta: MATCH_ASSESSMENT_META[match.targetItemMatch] }
+        : null,
+      match.visualMatch
+        ? { label: '视觉比对', meta: VISUAL_MATCH_META[match.visualMatch] }
+        : null,
+      match.skuVerificationStatus
+        ? { label: 'SKU', meta: SKU_VERIFICATION_META[match.skuVerificationStatus] }
+        : null,
+      match.priceVerificationStatus
+        ? { label: '价格', meta: PRICE_VERIFICATION_META[match.priceVerificationStatus] }
+        : null,
+      this.relevanceInfo()
+        ? { label: '相关性', meta: this.relevanceInfo()! }
+        : null,
+      this.nextActionInfo()
+        ? {
+            label: '建议',
+            meta: { label: this.nextActionInfo()!.label, tone: 'default' },
+          }
+        : null,
+    ].filter(
+      (row): row is { label: string; meta: { label: string; tone: string } } =>
+        row !== null,
+    );
+  });
   readonly collectedAt = computed(() => formatDateTime(this.product().collectedAt));
-  readonly priceObservedAt = computed(() =>
-    this.product().price?.observedAt ? formatDateTime(this.product().price!.observedAt) : null,
-  );
   readonly manualNote = computed(() => this.product().match?.manualNote ?? null);
   readonly aiWarning = computed(() => {
     const match = this.product().match;
@@ -126,20 +179,110 @@ export class ProductCardComponent {
   });
   readonly matchedSkuViews = computed(() => {
     const product = this.product();
-    const keyed = product.skuOptions.map((sku, index) => ({
-      key: sku.skuId ?? `sku-${index + 1}`,
-      sku,
-      decision: product.match?.skuDecisions.find(
-        (decision: SkuDecision) => decision.skuId === (sku.skuId ?? `sku-${index + 1}`),
-      ),
-    }));
     const matchedIds = product.match?.matchedSkuIds ?? [];
-    return keyed.filter((entry) => matchedIds.includes(entry.key));
+    return product.skuOptions
+      .map((sku, index) => ({ key: sku.skuId ?? `sku-${index + 1}`, sku }))
+      .filter((entry) => matchedIds.includes(entry.key));
   });
+  readonly targetPriceHint = computed(() => {
+    const match = this.product().match;
+    const priced = this.matchedSkuViews().find(
+      (entry) => typeof entry.sku.price === 'number',
+    );
+    if (
+      priced &&
+      (match?.priceVerificationStatus === 'VERIFIED' ||
+        match?.priceVerificationStatus === 'PARTIAL')
+    ) {
+      return `${priced.sku.name} · ¥${priced.sku.price!.toFixed(2)}`;
+    }
+    if (match?.skuVerificationStatus === 'FAILED') return '详情暂不可用';
+    const price = this.priceText();
+    if (price && price !== '未获取') return `${price} 起 · 规格待确认`;
+    return null;
+  });
+  readonly skuReviewViews = computed(() =>
+    this.product().skuOptions.map((sku, index) => {
+      const skuId = sku.skuId ?? `sku-${index + 1}`;
+      const manual = (this.product().match?.manualSkuDecisions ?? []).find(
+        (item) => item.skuId === skuId,
+      );
+      return {
+        skuId,
+        name: sku.name,
+        price: sku.price,
+        manual: manual?.decision ?? null,
+      };
+    }),
+  );
   readonly openUrl = computed(() => this.product().productUrl);
+  readonly isWholesale = computed(
+    () =>
+      this.product().platform === 'alibaba1688' ||
+      Boolean(this.product().wholesalePrice),
+  );
+  readonly wholesale = computed(() => this.product().wholesalePrice);
+  readonly supplierLabel = computed(() => (this.isWholesale() ? '供应商' : '店铺'));
+  readonly wholesaleRangeText = computed(() => {
+    const wholesale = this.wholesale();
+    if (!wholesale) return '未获取';
+    const { priceMin, priceMax, currency, unit } = wholesale;
+    const display = (amount: number): string => {
+      const value = amount.toFixed(2);
+      if (currency === 'CNY') return `¥${value}`;
+      if (currency) return `${currency} ${value}`;
+      return `${value}（币种未知）`;
+    };
+    const suffix = unit ? ` / ${unit}` : '';
+    if (priceMin !== null && priceMax !== null) {
+      if (priceMax > priceMin) {
+        return `${display(priceMin)} ～ ${display(priceMax)}${suffix}`;
+      }
+      return `${display(priceMin)}${suffix}`;
+    }
+    if (priceMin !== null) return `${display(priceMin)} 起${suffix}`;
+    if (priceMax !== null) return `最高 ${display(priceMax)}${suffix}`;
+    return '未获取';
+  });
+  readonly wholesaleMoqText = computed(() => {
+    const wholesale = this.wholesale();
+    if (!wholesale || wholesale.minOrderQuantity === null) return '未知';
+    return wholesale.unit
+      ? `${wholesale.minOrderQuantity} ${wholesale.unit}`
+      : String(wholesale.minOrderQuantity);
+  });
+  readonly wholesaleUnitText = computed(() => this.wholesale()?.unit ?? '未知');
+  readonly wholesaleTierRows = computed(() => {
+    const wholesale = this.wholesale();
+    if (!wholesale || wholesale.priceTiers.length === 0) return [];
+    return wholesale.priceTiers.map((tier) => ({
+      key: tier.minQuantity,
+      text: `${tier.minQuantity} ${
+        wholesale.unit ?? ''
+      }起：${this.formatWholesaleAmount(tier.price)}${wholesale.unit ? ` / ${wholesale.unit}` : ''}`,
+    }));
+  });
+  readonly wholesaleSkuViews = computed(() =>
+    (this.product().skuOptions ?? []).slice(0, 12).map((sku, index) => ({
+      key: sku.skuId ?? `wholesale-sku-${index + 1}`,
+      sku,
+      priceText:
+        sku.price !== undefined
+          ? this.formatWholesaleAmount(sku.price)
+          : null,
+    })),
+  );
+  readonly wholesaleNote = computed(() => this.wholesale()?.note ?? null);
 
-  rawJson(value: Record<string, unknown> | null): string {
-    if (!value) return '无原始数据';
+  private formatWholesaleAmount(amount: number): string {
+    const currency = this.wholesale()?.currency ?? null;
+    const value = amount.toFixed(2);
+    if (currency === 'CNY') return `¥${value}`;
+    if (currency) return `${currency} ${value}`;
+    return `${value}（币种未知）`;
+  }
+
+  rawJson(value: Record<string, unknown> | null): string {    if (!value) return '无原始数据';
     try {
       const text = JSON.stringify(value, null, 2);
       return text.length > 12000 ? `${text.slice(0, 12000)}\n…（已截断）` : text;
@@ -152,36 +295,46 @@ export class ProductCardComponent {
     return formatDateTime(value);
   }
 
-  openReview(): void {
-    const product = this.product();
-    this.modal.create<ReviewModalComponent, ReviewModalData, ReviewModalResult>({
-      nzTitle: '人工核对商品',
-      nzContent: ReviewModalComponent,
-      nzData: { product },
-      nzOkText: '保存核对结果',
-      nzCancelText: '取消',
-      nzWidth: 560,
-      nzOnOk: (instance) =>
-        this.submitReview(instance.form.getRawValue() as ReviewModalResult),
-    });
+  tagColor(tone: string): string {
+    switch (tone) {
+      case 'success':
+        return 'green';
+      case 'warning':
+        return 'gold';
+      case 'error':
+        return 'red';
+      case 'processing':
+        return 'blue';
+      default:
+        return 'default';
+    }
   }
 
-  private async submitReview(result: ReviewModalResult): Promise<boolean> {
-    if (this.reviewing()) return false;
+  quickReview(decision: 'MATCH' | 'NO_MATCH' | 'PENDING'): void {
+    void this.submitManual({ decision });
+  }
+
+  reviewSku(skuId: string, decision: 'TARGET' | 'BUNDLE' | 'EXCLUDED'): void {
+    void this.submitManual({ skuDecisions: [{ skuId, decision }] });
+  }
+
+  skuDecisionLabel(decision: 'TARGET' | 'BUNDLE' | 'EXCLUDED'): string {
+    if (decision === 'TARGET') return '目标款';
+    if (decision === 'BUNDLE') return '组合装';
+    return '已排除';
+  }
+
+  private async submitManual(payload: ReviewPayload): Promise<void> {
+    if (this.reviewing()) return;
     this.reviewing.set(true);
     try {
       const updated = await firstValueFrom(
-        this.api.reviewCandidate(this.product().id, {
-          decision: result.decision,
-          note: result.note?.trim() || undefined,
-        }),
+        this.api.reviewCandidate(this.product().id, payload),
       );
-      this.message.success('人工核对结果已保存');
+      this.message.success('已保存');
       this.reviewed.emit(updated);
-      return true;
     } catch (error) {
       this.message.error(apiErrorMessage(error));
-      return false;
     } finally {
       this.reviewing.set(false);
     }

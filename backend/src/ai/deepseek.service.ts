@@ -18,6 +18,7 @@ interface DeepseekChatResponse {
     message?: {
       content?: string;
     };
+    finish_reason?: string;
   }>;
   error?: {
     message?: string;
@@ -93,7 +94,7 @@ export class DeepseekService {
             model: this.model,
             messages,
             temperature: 0.1,
-            max_tokens: 2500,
+            max_tokens: 4000,
             response_format: { type: 'json_object' },
             stream: false,
           },
@@ -105,7 +106,11 @@ export class DeepseekService {
             },
           },
         );
-        const content = response.data.choices?.[0]?.message?.content;
+        const choice = response.data.choices?.[0];
+        if (choice?.finish_reason === 'length') {
+          throw new Error('DeepSeek 输出被截断（finish_reason=length）');
+        }
+        const content = choice?.message?.content;
         if (!content || !content.trim()) {
           throw new Error('DeepSeek 返回内容为空');
         }

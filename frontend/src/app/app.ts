@@ -1,5 +1,5 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { Component, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
+import { Component, HostListener, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { NzAlertModule } from 'ng-zorro-antd/alert';
 import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzIconModule } from 'ng-zorro-antd/icon';
@@ -13,12 +13,37 @@ import { SearchFormComponent } from './components/search-form/search-form.compon
 import { ApiService, apiErrorMessage } from './core/api.service';
 import { formatDateTime, PLATFORM_META } from './core/labels';
 import {
-  PLATFORM_ORDER,
+  CandidateRelevance,
   Product,
   ProvidersStatusResponse,
   SearchDetail,
   SearchFormPayload,
+  SearchRunStatus,
+  VerificationActionEvent,
 } from './core/models';
+
+function relevanceRank(value: CandidateRelevance | null | undefined): number {
+  switch (value) {
+    case 'HIGH':
+      return 3;
+    case 'MEDIUM':
+      return 2;
+    case 'LOW':
+      return 1;
+    case 'NONE':
+      return 0;
+    default:
+      return -1;
+  }
+}
+
+function byRelevanceThenConfidence(a: Product, b: Product): number {
+  const byRelevance =
+    relevanceRank(b.match?.candidateRelevance) -
+    relevanceRank(a.match?.candidateRelevance);
+  if (byRelevance !== 0) return byRelevance;
+  return (b.match?.confidence ?? -1) - (a.match?.confidence ?? -1);
+}
 
 @Component({
   selector: 'app-root',
@@ -43,36 +68,20 @@ export class App implements OnInit, OnDestroy {
   private currentSearchId: string | null = null;
   private pollFailures = 0;
 
-  readonly platforms = PLATFORM_ORDER;
   readonly platformMeta = PLATFORM_META;
   readonly statuses = signal<ProvidersStatusResponse | null>(null);
   readonly detail = signal<SearchDetail | null>(null);
   readonly error = signal<string | null>(null);
+  readonly notice = signal<string | null>(null);
+  readonly actionNotice = signal<string | null>(null);
   readonly searching = signal(false);
+  readonly cancelling = signal(false);
+  readonly verificationBusyTaskId = signal<string | null>(null);
   readonly statusesError = signal<string | null>(null);
 
   readonly aiStatus = computed(() => this.statuses()?.ai ?? null);
-  readonly providerChips = computed(() =>
-    PLATFORM_ORDER.map((platform) => {
-      const status = this.statuses()?.platforms?.[platform] ?? null;
-      const channelSummary =
-        status?.channels && status.channels.length > 0
-          ? status.channels
-              .map(
-                (channel) =>
-                  `${channel.label}：${
-                    channel.configured ? '已配置' : (channel.reason ?? '未配置')
-                  }`,
-              )
-              .join('\n')
-          : (status?.reason ?? '状态加载中');
-      return {
-        platform,
-        meta: PLATFORM_META[platform],
-        status,
-        tooltip: channelSummary,
-      };
-    }),
+  readonly visiblePlatforms = computed(() =>
+    (this.detail()?.platforms ?? []).filter((platform) => platform.channels.length > 0),
   );
   readonly totalMatched = computed(() =>
     (this.detail()?.platforms ?? []).reduce((sum, item) => sum + item.matchedCount, 0),
@@ -93,6 +102,10 @@ export class App implements OnInit, OnDestroy {
         return '搜索失败';
       case 'INTERRUPTED':
         return '任务被中断';
+      case 'CANCELLED':
+        return '已取消';
+      case 'WAITING_MANUAL_VERIFICATION':
+        return '等待人工验证';
       default:
         return '';
     }
@@ -101,14 +114,20 @@ export class App implements OnInit, OnDestroy {
     const status = this.detail()?.status;
     if (status === 'COMPLETED') return 'success';
     if (status === 'FAILED' || status === 'INTERRUPTED') return 'error';
+    if (status === 'WAITING_MANUAL_VERIFICATION') return 'warning';
     if (status === 'RUNNING' || status === 'PENDING') return 'processing';
     return 'default';
   });
   readonly formattedStartedAt = computed(() => formatDateTime(this.detail()?.startedAt));
   readonly formattedCompletedAt = computed(() => formatDateTime(this.detail()?.completedAt));
-  readonly configuredCount = computed(
-    () => this.providerChips().filter((chip) => chip.status?.configured).length,
-  );
+  readonly canCancel = computed(() => {
+    const status = this.detail()?.status;
+    return (
+      status === 'PENDING' ||
+      status === 'RUNNING' ||
+      status === 'WAITING_MANUAL_VERIFICATION'
+    );
+  });
 
   ngOnInit(): void {
     this.loadStatuses();
@@ -138,6 +157,8 @@ export class App implements OnInit, OnDestroy {
     this.pollFailures = 0;
     this.currentSearchId = null;
     this.error.set(null);
+    this.notice.set(null);
+    this.actionNotice.set(null);
     this.detail.set(null);
     this.searching.set(true);
 
@@ -147,7 +168,10 @@ export class App implements OnInit, OnDestroy {
           targetName: payload.targetName,
           seriesName: payload.seriesName,
           aliases: payload.aliases,
+          seriesAliases: payload.seriesAliases,
+          brandNames: payload.brandNames,
           referenceImageId: payload.referenceImageId,
+          platforms: payload.platforms,
         }),
       );
       this.currentSearchId = created.searchId;
@@ -159,12 +183,80 @@ export class App implements OnInit, OnDestroy {
     }
   }
 
-  async onReviewed(updated: Product): Promise<void> {
-    this.applyReviewedProduct(updated);
+  async cancelActiveSearch(): Promise<void> {
+    const detail = this.detail();
+    if (!detail || this.cancelling()) return;
+    this.cancelling.set(true);
+    this.error.set(null);
+    this.actionNotice.set(null);
+    try {
+      const result = await firstValueFrom(
+        this.api.cancelSearch(detail.searchId),
+      );
+      this.clearPoll();
+      this.searching.set(false);
+      this.detail.set({
+        ...detail,
+        status: result.status as SearchRunStatus,
+        completedAt: new Date().toISOString(),
+      });
+      this.actionNotice.set('搜索已停止；已完成的第三方请求不会退费。');
+      await this.refresh(detail.searchId);
+    } catch (error) {
+      this.error.set(apiErrorMessage(error));
+    } finally {
+      this.cancelling.set(false);
+    }
+  }
+
+  @HostListener('window:beforeunload', ['$event'])
+  onBeforeUnload(event: BeforeUnloadEvent): void {
+    if (!this.canCancel()) return;
+    event.preventDefault();
+    event.returnValue = '当前搜索仍在后台运行，离开页面不会停止搜索。';
+  }
+
+  async onReviewed(updated: Product): Promise<void> {    this.applyReviewedProduct(updated);
     const detail = this.detail();
     if (!detail) return;
     // 本地先更新分组，再从服务端校准；刷新失败也不会留下错误提示语
     await this.refresh(detail.searchId);
+  }
+
+  async onVerificationAction(event: VerificationActionEvent): Promise<void> {
+    const detail = this.detail();
+    if (!detail) return;
+    this.verificationBusyTaskId.set(event.taskId);
+    this.error.set(null);
+    this.notice.set(null);
+    try {
+      if (event.action === 'open') {
+        const info = await firstValueFrom(
+          this.api.openVerificationBrowser(detail.searchId, event.taskId),
+        );
+        this.notice.set(info.message);
+        await this.refresh(detail.searchId);
+      } else if (event.action === 'close') {
+        await firstValueFrom(
+          this.api.closeVerificationBrowser(detail.searchId, event.taskId),
+        );
+        this.notice.set('验证浏览器已关闭。如需重新验证或继续采集，请再次打开验证浏览器。');
+        await this.refresh(detail.searchId);
+      } else {
+        await firstValueFrom(
+          this.api.resumeVerification(detail.searchId, event.taskId),
+        );
+        this.notice.set(
+          '已关闭验证浏览器并继续采集。系统会重新加载页面并检查验证码/登录状态，不会假定验证一定成功。',
+        );
+        this.searching.set(true);
+        await this.poll(detail.searchId);
+      }
+    } catch (error) {
+      this.error.set(apiErrorMessage(error));
+    } finally {
+      this.verificationBusyTaskId.set(null);
+    }
   }
 
   private async poll(searchId: string): Promise<void> {
@@ -249,9 +341,8 @@ export class App implements OnInit, OnDestroy {
         excludedCount += 1;
       }
 
-      products.sort(
-        (a, b) => (b.match?.confidence ?? -1) - (a.match?.confidence ?? -1),
-      );
+      products.sort(byRelevanceThenConfidence);
+      uncertainProducts.sort(byRelevanceThenConfidence);
       return {
         ...platform,
         products,

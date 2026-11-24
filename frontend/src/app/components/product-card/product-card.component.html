@@ -10,6 +10,9 @@
     }
     <div class="media-badges">
       <span class="platform-badge">{{ platform().label }}</span>
+      @if (isWholesale()) {
+        <span class="wholesale-badge">批发采购</span>
+      }
       @if (matchTypeInfo(); as info) {
         <span class="type-badge">{{ info.label }}</span>
       }
@@ -18,6 +21,7 @@
 
   <div class="product-card__body">
     <div class="meta-line">
+      <nz-tag [nzColor]="tagColor(plainStatus().tone)">{{ plainStatus().label }}</nz-tag>
       <div class="source-tags">
         @for (label of sourceTags(); track label) {
           <nz-tag>{{ label }}</nz-tag>
@@ -35,7 +39,7 @@
       <a [href]="openUrl()" target="_blank" rel="noopener noreferrer">{{ title() }}</a>
     </h3>
 
-    <div class="shop-line">店铺：{{ product().shopName || '未获取' }}</div>
+    <div class="shop-line">{{ supplierLabel() }}：{{ product().shopName || '未获取' }}</div>
 
     <p class="content-summary">{{ summary() }}</p>
 
@@ -56,15 +60,104 @@
             @if (entry.sku.price !== undefined) {
               <span class="sku-price">¥{{ entry.sku.price.toFixed(2) }}</span>
             }
-            @if (entry.decision?.reason) {
-              <span class="sku-reason">{{ entry.decision!.reason }}</span>
-            }
           </div>
         }
       </div>
     }
 
-    @if (hasMultipleSources()) {
+    @if (product().skuOptions.length > 1) {
+      <details class="sku-review">
+        <summary>SKU 人工判断</summary>
+        @for (row of skuReviewViews(); track row.skuId) {
+          <div class="sku-row">
+            <span class="sku-name">{{ row.name }}</span>
+            @if (row.price !== undefined) {
+              <span class="sku-price">¥{{ row.price.toFixed(2) }}</span>
+            }
+            @if (row.manual; as manual) {
+              <nz-tag>{{ skuDecisionLabel(manual) }}</nz-tag>
+            }
+            <span class="sku-actions">
+              <button
+                nz-button
+                nzSize="small"
+                type="button"
+                [disabled]="reviewing()"
+                (click)="reviewSku(row.skuId, 'TARGET')"
+              >
+                目标款
+              </button>
+              <button
+                nz-button
+                nzSize="small"
+                type="button"
+                [disabled]="reviewing()"
+                (click)="reviewSku(row.skuId, 'BUNDLE')"
+              >
+                组合装
+              </button>
+              <button
+                nz-button
+                nzDanger
+                nzSize="small"
+                type="button"
+                [disabled]="reviewing()"
+                (click)="reviewSku(row.skuId, 'EXCLUDED')"
+              >
+                排除
+              </button>
+            </span>
+          </div>
+        }
+      </details>
+    }
+
+    @if (isWholesale()) {
+      <div class="wholesale-block">
+        <div class="wholesale-head">
+          <span class="wholesale-title">批发采购条件</span>
+        </div>
+        <div class="wholesale-range">{{ wholesaleRangeText() }}</div>
+        <div class="wholesale-grid">
+          <span>
+            <span class="wholesale-label">最小起订量</span>
+            <strong>{{ wholesaleMoqText() }}</strong>
+          </span>
+          <span>
+            <span class="wholesale-label">计价单位</span>
+            <strong>{{ wholesaleUnitText() }}</strong>
+          </span>
+        </div>
+        @if (wholesaleTierRows().length) {
+          <div class="wholesale-tiers">
+            <span class="wholesale-label">采购阶梯</span>
+            @for (tier of wholesaleTierRows(); track tier.key) {
+              <div class="wholesale-tier">{{ tier.text }}</div>
+            }
+          </div>
+        } @else {
+          <div class="wholesale-unknown">采购阶梯：未知</div>
+        }
+        @if (wholesaleSkuViews().length) {
+          <div class="wholesale-skus">
+            <span class="wholesale-label">SKU 规格</span>
+            @for (entry of wholesaleSkuViews(); track entry.key) {
+              <div class="wholesale-sku">
+                <span>{{ entry.sku.name }}</span>
+                @if (entry.priceText) {
+                  <span class="wholesale-sku-price">{{ entry.priceText }}</span>
+                }
+              </div>
+            }
+          </div>
+        } @else {
+          <div class="wholesale-unknown">SKU 规格：未知</div>
+        }
+        @if (wholesaleNote(); as note) {
+          <div class="wholesale-note">{{ note }}</div>
+        }
+      </div>
+    } @else if (hasMultipleSources()) {
       <div class="source-compare">
         <div class="source-compare__head">
           <strong>来源价格对比</strong>
@@ -110,9 +203,7 @@
           </tbody>
         </table>
         @if (priceConflict()) {
-          <div class="price-conflict">
-            两个来源价格不一致，系统未自动选择任何一个作为真实价格，请打开商品页核对。
-          </div>
+          <div class="price-conflict">两个来源价格不一致，请打开商品页核对。</div>
         }
       </div>
     } @else {
@@ -130,14 +221,14 @@
         @if (groupPrice(); as group) {
           <div class="group-price">{{ group.displayText }}</div>
         }
-        <div class="price-source">来源：{{ product().price?.priceSource || '未提供价格来源' }}</div>
-        @if (priceObservedAt(); as observedAt) {
-          <div class="price-source">价格时间：{{ observedAt }}</div>
-        }
         @if (primaryRegionNote(); as regionNote) {
           <div class="region-note">{{ regionNote }}</div>
         }
       </div>
+    }
+
+    @if (targetPriceHint(); as hint) {
+      <div class="target-price">{{ hint }}</div>
     }
 
     @if (aiWarning(); as warning) {
@@ -147,7 +238,6 @@
     <details class="reason-box">
       <summary>
         <span>判断依据</span>
-        <span class="confidence">AI 置信度 {{ confidence() }}</span>
       </summary>
       @if (product().match?.reason) {
         <p class="reason-text">{{ product().match!.reason }}</p>
@@ -155,10 +245,26 @@
       @if (manualNote(); as note) {
         <p class="manual-note">人工备注：{{ note }}</p>
       }
+      @if (assessmentRows().length) {
+        <div class="assessment-grid">
+          @for (row of assessmentRows(); track row.label) {
+            <span class="assessment-item">
+              <span class="assessment-label">{{ row.label }}</span>
+              <nz-tag [nzColor]="tagColor(row.meta.tone)">{{ row.meta.label }}</nz-tag>
+            </span>
+          }
+        </div>
+      }
       @if (product().match?.evidence?.length) {
         <ul class="evidence-list">
-          @for (evidence of product().match!.evidence; track evidence) {
-            <li>{{ evidence }}</li>
+          @for (evidence of product().match!.evidence; track $index) {
+            <li>
+              <span class="evidence-source">{{ evidenceSourceLabels[evidence.sourceField] }}</span>
+              <span>{{ evidence.content }}</span>
+              @if (evidence.interpretation) {
+                <span class="evidence-interpretation">—— {{ evidence.interpretation }}</span>
+              }
+            </li>
           }
         </ul>
       }
@@ -209,9 +315,37 @@
       >
         查看商品
       </a>
-      <button nz-button nzSize="small" type="button" [nzLoading]="reviewing()" (click)="openReview()">
-        核对结果
+      <button
+        nz-button
+        nzType="primary"
+        nzSize="small"
+        type="button"
+        [nzLoading]="reviewing()"
+        (click)="quickReview('MATCH')"
+      >
+        确认同款
       </button>
+      <button
+        nz-button
+        nzDanger
+        nzSize="small"
+        type="button"
+        [nzLoading]="reviewing()"
+        (click)="quickReview('NO_MATCH')"
+      >
+        排除
+      </button>
+      @if (manualLabel()) {
+        <button
+          nz-button
+          nzSize="small"
+          type="button"
+          [nzLoading]="reviewing()"
+          (click)="quickReview('PENDING')"
+        >
+          撤销
+        </button>
+      }
     </div>
   </div>
 </article>

@@ -1,10 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import {
   BlockedError,
+  GoodsSearchUnavailableError,
   NotConfiguredError,
   ParseFailedError,
 } from '../../common/errors/provider.errors';
-import { PlatformEnum, ProviderKeyEnum, SourceTypeEnum, ObservationSourceEnum } from '../../common/enums';
+import {
+  ObservationSourceEnum,
+  PlatformEnum,
+  ProviderErrorCodeEnum,
+  ProviderKeyEnum,
+  SourceTypeEnum,
+} from '../../common/enums';
 import { NormalizedProduct } from '../../common/interfaces/normalized-product.interface';
 import {
   PlatformProvider,
@@ -15,14 +22,14 @@ import {
 import { nowIso } from '../../common/utils/date.util';
 import { toHttpUrl } from '../../common/utils/url.util';
 import { BrowserService } from '../../browser/browser.service';
+import { Page } from 'playwright';
 import { parseVisiblePrice } from '../shared/browser-price';
-
-interface ExtractedCard {
-  url: string;
-  title: string;
-  imageUrl: string;
-  priceText: string;
-}
+import {
+  XiaohongshuSearchCard,
+  buildXiaohongshuSearchUrls,
+  classifyXiaohongshuSearch,
+  isXiaohongshuGoodsUrl,
+} from './xiaohongshu-web';
 
 const LOGIN_HINTS = [
   '登录后查看',
@@ -42,6 +49,30 @@ const NO_RESULT_HINTS = [
   '无搜索',
   '暂时没有',
 ];
+
+interface ScanResult {
+  goods: XiaohongshuSearchCard[];
+  notes: number;
+  goodsModeActive: boolean;
+}
+
+type XiaohongshuSearchOutcome =
+  | {
+      kind: 'goods';
+      cards: XiaohongshuSearchCard[];
+      noteCount: number;
+      goodsModeActive: boolean;
+      url: string;
+    }
+  | { kind: 'empty'; url: string }
+  | {
+      kind: 'unavailable';
+      noteCount: number;
+      goodsModeActive: boolean;
+      url: string;
+      body: string;
+      loginRequired: boolean;
+    };
 
 @Injectable()
 export class XiaohongshuPlaywrightProvider implements PlatformProvider {
@@ -78,7 +109,7 @@ export class XiaohongshuPlaywrightProvider implements PlatformProvider {
       configured: true,
       provider: this.providerType,
       reason:
-        'Playwright 可见浏览器；首次使用请运行 npm run browser:login -- xiaohongshu 扫码登录',
+        'Playwright 可见浏览器；首次使用请运行 npm run browser:login -- xiaohongshu 扫码登录。网页端可能不提供商城商品搜索入口，此时会明确返回 GOODS_SEARCH_UNAVAILABLE',
     };
   }
 
@@ -90,99 +121,243 @@ export class XiaohongshuPlaywrightProvider implements PlatformProvider {
       throw new NotConfiguredError('Playwright Chromium 未安装，请先运行 npm run playwright:install');
     }
 
-    const url = `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(
-      keyword,
-    )}&source=web_search_result_notes&type=51`;
+    const urls = buildXiaohongshuSearchUrls(keyword);
+    const outcome = await this.browser.withPage(this.platform, urls[0], async (page) => {
+      let lastNotes = 0;
+      let lastUrl = page.url();
+      let lastBody = '';
+      let lastGoodsMode = false;
+      let loginRequired = false;
+      let triedGoodsTab = false;
 
-    const result = await this.browser.withPage(this.platform, url, async (page) => {
-      await page.waitForTimeout(4000);
-      await this.browser.assertNotBlocked(page);
+      for (let index = 0; index < urls.length; index += 1) {
+        if (index > 0) {
+          await page.goto(urls[index], { waitUntil: 'domcontentloaded' });
+        }
+        await page.waitForTimeout(3000);
+        await this.browser.assertNotBlocked(page);
 
-      const extracted = await page.evaluate(() => {
-        const goods: Array<{
-          url: string;
-          title: string;
-          imageUrl: string;
-          priceText: string;
-        }> = [];
-        const seen = new Set<string>();
-        let notes = 0;
-        const anchors = Array.from(document.querySelectorAll('a[href]'));
-        for (const anchor of anchors) {
-          const href = (anchor as HTMLAnchorElement).href;
-          if (!href) continue;
-          if (/xiaohongshu\.com\/(explore|discovery_item|discovery\/item)\//i.test(href)) {
-            notes += 1;
-            continue;
+        let scan = await this.scanPage(page);
+        if (scan.goods.length > 0) {
+          return {
+            kind: 'goods',
+            cards: scan.goods,
+            noteCount: scan.notes,
+            goodsModeActive: scan.goodsModeActive,
+            url: page.url(),
+          } satisfies XiaohongshuSearchOutcome;
+        }
+
+        // 网页上如果存在“商品”Tab，点击一次进入商品搜索模式；只做一次，不循环重试。
+        if (!triedGoodsTab && index === 0 && (await this.tryClickGoodsTab(page))) {
+          triedGoodsTab = true;
+          await page.waitForTimeout(2500);
+          await this.browser.assertNotBlocked(page);
+          scan = await this.scanPage(page);
+          if (scan.goods.length > 0) {
+            return {
+              kind: 'goods',
+              cards: scan.goods,
+              noteCount: scan.notes,
+              goodsModeActive: scan.goodsModeActive,
+              url: page.url(),
+            } satisfies XiaohongshuSearchOutcome;
           }
-          if (!/(goods|item|product)/i.test(href)) continue;
-          if (!/(xiaohongshu\.com|xhslink\.com)/i.test(href)) continue;
-          if (seen.has(href)) continue;
-          const img = anchor.querySelector('img') as HTMLImageElement | null;
-          const text = (anchor.getAttribute('title') ?? anchor.textContent ?? '')
-            .replace(/\s+/g, ' ')
-            .trim();
-          if (text.length < 2) continue;
-          seen.add(href);
-          goods.push({
-            url: href,
-            title: text.slice(0, 300),
-            imageUrl: img?.currentSrc || img?.src || '',
-            priceText: (anchor.textContent ?? '').slice(0, 500),
-          });
-          if (goods.length >= 60) break;
         }
-        return { goods, notes };
-      });
 
-      if (extracted.goods.length === 0) {
-        const body = await this.browser.bodyText(page);
-        if (LOGIN_HINTS.some((hint) => body.includes(hint))) {
-          throw new BlockedError(
-            'LOGIN_REQUIRED',
-            '小红书搜索需要登录：请运行 npm run browser:login -- xiaohongshu 完成扫码登录后重试',
-          );
+        lastNotes = scan.notes;
+        lastUrl = page.url();
+        lastGoodsMode = scan.goodsModeActive;
+        lastBody = await this.browser.bodyText(page);
+
+        if (LOGIN_HINTS.some((hint) => lastBody.includes(hint))) {
+          loginRequired = true;
         }
-        if (extracted.notes > 0) {
-          throw new ParseFailedError(
-            '小红书搜索只返回了笔记，未出现可识别的商品链接；不能把笔记内容当作商品数据',
-            body.slice(0, 300),
-          );
+
+        const noResult = NO_RESULT_HINTS.some((hint) => lastBody.includes(hint));
+        const mode = classifyXiaohongshuSearch({
+          goodsCount: scan.goods.length,
+          noteCount: scan.notes,
+          goodsModeActive: scan.goodsModeActive,
+          noResultHint: noResult,
+        });
+        if (mode === 'NO_RESULTS') {
+          return { kind: 'empty', url: page.url() } satisfies XiaohongshuSearchOutcome;
         }
-        if (NO_RESULT_HINTS.some((hint) => body.includes(hint))) {
-          return { cards: [], noteCount: 0, empty: true };
-        }
-        throw new ParseFailedError(
-          '小红书搜索页未发现商品或笔记卡片，可能是未登录、页面结构变化或被风控拦截',
-          body.slice(0, 300),
-        );
+        // NOTES_ONLY / UNKNOWN：继续尝试下一个商品搜索入口，笔记不会进入商品集合。
       }
-      return { cards: extracted.goods, noteCount: extracted.notes, empty: false };
+
+      return {
+        kind: 'unavailable',
+        noteCount: lastNotes,
+        goodsModeActive: lastGoodsMode,
+        url: lastUrl,
+        body: lastBody.slice(0, 300),
+        loginRequired,
+      } satisfies XiaohongshuSearchOutcome;
     });
 
-    if (result.empty) {
+    if (outcome.kind === 'empty') {
       return {
         products: [],
         status: 'EMPTY',
-        warnings: ['小红书搜索页可访问，但没有返回商品或笔记结果'],
+        warnings: ['已进入小红书商品搜索模式，但没有返回商品结果'],
       };
     }
 
-    const products = this.toNormalizedProducts(result.cards, options.maxResults);
-    if (result.cards.length > 0 && products.length === 0) {
+    if (outcome.kind === 'unavailable') {
+      if (outcome.loginRequired) {
+        throw new BlockedError(
+          ProviderErrorCodeEnum.LOGIN_REQUIRED,
+          '小红书搜索需要登录：请在任务面板打开验证浏览器完成登录后点击“继续采集”（或运行 npm run browser:login -- xiaohongshu）',
+        );
+      }
+      throw new GoodsSearchUnavailableError(
+        this.unavailableMessage(outcome.noteCount, outcome.goodsModeActive),
+        outcome.body,
+      );
+    }
+
+    const products = this.toNormalizedProducts(outcome.cards, options.maxResults);
+    if (outcome.cards.length > 0 && products.length === 0) {
       throw new ParseFailedError('小红书页面出现商品卡片，但无法解析出有效商品链接');
+    }
+    const missingImage = products.filter((product) => product.imageUrls.length === 0).length;
+    const unparsedPrice = products.filter(
+      (product) => product.price?.amount === null || product.price?.amount === undefined,
+    ).length;
+    const warnings = [
+      '小红书本次进入的是商城商品搜索模式，只提取商品卡片（名称、图片、价格、商品链接）',
+      outcome.noteCount > 0
+        ? `页面同时存在 ${outcome.noteCount} 条笔记链接，已全部排除，未当作商品`
+        : '页面未出现笔记链接',
+      '价格仅取页面可见展示价，未确认具体 SKU；目标款式无法确认时由 AI 标记为待确认',
+    ];
+    if (missingImage > 0 || unparsedPrice > 0) {
+      warnings.push(
+        `其中 ${missingImage} 个商品未取得图片、${unparsedPrice} 个未解析出普通现价，已如实留空，不填充虚假值`,
+      );
     }
     return {
       products,
       status: products.length > 0 ? 'SUCCESS' : 'EMPTY',
-      warnings: [
-        `小红书解析为实验能力，页面同时存在 ${result.noteCount} 条笔记链接`,
-        '仅提取页面可见的商品链接、标题与价格，无法确认 SKU 时由 AI 标记为待确认',
-      ],
+      warnings,
     };
   }
 
-  private toNormalizedProducts(cards: ExtractedCard[], maxResults: number): NormalizedProduct[] {
+  private unavailableMessage(noteCount: number, goodsModeActive: boolean): string {
+    if (noteCount > 0) {
+      return `小红书网页搜索未提供可用的商城商品搜索模式：本次页面只返回了 ${noteCount} 条笔记链接，没有商品卡片。不会把笔记当作商品数据，也不伪造商品。网页浏览器无法唤起官方 deeplink（xhsdiscover://search/result?...&target_search=goods）；如需商城商品数据，请使用 OKData 渠道，或单独搭建 Android 模拟器 + Appium 方案（见 docs/platform-integration.md）。`;
+    }
+    const head = goodsModeActive
+      ? '小红书网页商品搜索模式可进入，但未找到商品卡片'
+      : '小红书网页搜索未提供商城商品搜索模式（未出现商品 Tab，也未进入 target_search=goods）';
+    return `${head}：本次页面没有可识别的商品卡片。不会把笔记当作商品数据，也不伪造商品。网页浏览器无法唤起官方 deeplink（xhsdiscover://search/result?...&target_search=goods）；如需商城商品数据，请使用 OKData 渠道，或单独搭建 Android 模拟器 + Appium 方案（见 docs/platform-integration.md）。`;
+  }
+
+  /** 页面扫描只在浏览器内执行，不能引用 Node 侧函数。 */
+  private scanPage(page: Page): Promise<ScanResult> {
+    return page.evaluate(() => {
+      const isNote = (href: string) =>
+        /xiaohongshu\.com\/(explore|discovery_item|discovery\/item)\//i.test(href);
+      const isGoods = (href: string) => {
+        try {
+          const parsed = new URL(href);
+          if (!['https:', 'http:'].includes(parsed.protocol)) return false;
+          const host = parsed.hostname.toLowerCase();
+          const allowedHost =
+            host === 'xiaohongshu.com' ||
+            host.endsWith('.xiaohongshu.com') ||
+            host === 'xhslink.com' ||
+            host.endsWith('.xhslink.com');
+          if (!allowedHost || isNote(href)) return false;
+          const path = parsed.pathname.toLowerCase();
+          if (/\/goods-detail(\/|$)/.test(path)) return true;
+          if (/\/goods(\/|$)/.test(path)) return true;
+          if (/\/product(\/|$)/.test(path)) return true;
+          return /[?&](goods_id|product_id)=/.test(parsed.search);
+        } catch {
+          return false;
+        }
+      };
+
+      const goods: Array<{
+        url: string;
+        title: string;
+        imageUrl: string;
+        priceText: string;
+      }> = [];
+      const seen = new Set<string>();
+      let notes = 0;
+      const anchors = Array.from(document.querySelectorAll('a[href]'));
+      for (const anchor of anchors) {
+        const href = (anchor as HTMLAnchorElement).href;
+        if (!href) continue;
+        if (isNote(href)) {
+          notes += 1;
+          continue;
+        }
+        if (!isGoods(href) || seen.has(href)) continue;
+        const card =
+          (anchor.closest(
+            '[class*="card"], [class*="goods"], [class*="item"], li',
+          ) as HTMLElement | null) ?? anchor;
+        const img = (anchor.querySelector('img') ??
+          card.querySelector('img')) as HTMLImageElement | null;
+        const titleEl = card.querySelector(
+          '[class*="title"], [class*="name"], [class*="desc"]',
+        );
+        const title = (titleEl?.textContent ?? anchor.getAttribute('title') ?? anchor.textContent ?? '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        if (title.length < 2) continue;
+        const priceEl = card.querySelector('[class*="price"], [class*="Price"]');
+        seen.add(href);
+        goods.push({
+          url: href,
+          title: title.slice(0, 300),
+          imageUrl: img?.currentSrc || img?.src || '',
+          priceText: (priceEl?.textContent ?? card.textContent ?? '').slice(0, 400),
+        });
+        if (goods.length >= 60) break;
+      }
+
+      // 只有页面上“商品”标签确实处于选中状态，才认为进入了商品搜索模式。
+      // 仅 URL 带 type=goods 不足以证明页面真的切换了模式。
+      let goodsModeActive = false;
+      const tabs = Array.from(
+        document.querySelectorAll('[role="tab"], [class*="tab"], [class*="filter"]'),
+      );
+      for (const node of tabs) {
+        if ((node.textContent ?? '').trim() !== '商品') continue;
+        const cls = String((node as HTMLElement).className);
+        if (/active|selected|checked/i.test(cls) || node.getAttribute('aria-selected') === 'true') {
+          goodsModeActive = true;
+          break;
+        }
+      }
+      return { goods, notes, goodsModeActive };
+    });
+  }
+
+  /** 点击搜索页上的“商品”筛选/标签；找不到或不可见时返回 false。 */
+  private tryClickGoodsTab(page: Page): Promise<boolean> {
+    return page.evaluate(() => {
+      const nodes = Array.from(document.querySelectorAll<HTMLElement>('span, div, a, li, button'));
+      for (const node of nodes) {
+        if (node.childElementCount > 0) continue;
+        if ((node.textContent ?? '').trim() !== '商品') continue;
+        const clickable =
+          node.closest<HTMLElement>('[role="tab"], [class*="tab"]') ?? null;
+        if (!clickable || clickable.offsetParent === null) continue;
+        clickable.click();
+        return true;
+      }
+      return false;
+    });
+  }
+
+  private toNormalizedProducts(cards: XiaohongshuSearchCard[], maxResults: number): NormalizedProduct[] {
     const products: NormalizedProduct[] = [];
     const seen = new Set<string>();
     for (const card of cards) {
@@ -192,21 +367,14 @@ export class XiaohongshuPlaywrightProvider implements PlatformProvider {
       } catch {
         continue;
       }
-      if (!['https:', 'http:'].includes(parsed.protocol)) continue;
-      const host = parsed.hostname.toLowerCase();
-      const allowedHost =
-        host === 'xiaohongshu.com' ||
-        host.endsWith('.xiaohongshu.com') ||
-        host === 'xhslink.com' ||
-        host.endsWith('.xhslink.com');
-      if (!allowedHost) continue;
+      if (!isXiaohongshuGoodsUrl(card.url)) continue;
       const dedupeKey = parsed.toString();
       if (seen.has(dedupeKey)) continue;
       seen.add(dedupeKey);
 
       const idMatch =
-        parsed.pathname.match(/\/(?:goods|item|product)\/([0-9a-zA-Z]+)/) ??
-        parsed.search.match(/[?&](?:id|goods_id)=([^&]+)/);
+        parsed.pathname.match(/\/(?:goods-detail|goods|product)\/([0-9a-zA-Z]+)/) ??
+        parsed.search.match(/[?&](?:goods_id|product_id)=([^&]+)/);
       const platformProductId = idMatch ? decodeURIComponent(idMatch[1]) : undefined;
       const imageUrl = toHttpUrl(card.imageUrl);
       const observedAt = nowIso();
@@ -218,18 +386,19 @@ export class XiaohongshuPlaywrightProvider implements PlatformProvider {
         productUrl: parsed.toString(),
         imageUrls: imageUrl ? [imageUrl] : [],
         skuOptions: [],
-        price: parseVisiblePrice(card.priceText, 'xiaohongshu_page'),
+        price: parseVisiblePrice(card.priceText, 'xiaohongshu_goods_page'),
         sourceType: SourceTypeEnum.BROWSER,
         source: ObservationSourceEnum.PLAYWRIGHT,
         providerKey: ProviderKeyEnum.PLAYWRIGHT,
         sourceProductId: platformProductId,
         region: 'local_browser',
         regionNote:
-          '来自本机登录浏览器的小红书页面，价格与账号地区、登录状态和促销有关',
+          '来自本机登录浏览器的小红书商城商品搜索页，价格与账号地区、登录状态和促销有关',
         collectedAt: observedAt,
         rawData: {
           href: card.url,
           priceText: card.priceText,
+          searchMode: 'goods',
         },
       });
       if (products.length >= maxResults) break;

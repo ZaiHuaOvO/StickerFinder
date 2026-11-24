@@ -1,22 +1,29 @@
 import { Component, computed, input, output } from '@angular/core';
 import { NzAlertModule } from 'ng-zorro-antd/alert';
+import { NzButtonModule } from 'ng-zorro-antd/button';
 import { NzCollapseModule } from 'ng-zorro-antd/collapse';
 import { NzEmptyModule } from 'ng-zorro-antd/empty';
 import { NzIconModule } from 'ng-zorro-antd/icon';
 import { NzSpinModule } from 'ng-zorro-antd/spin';
 import { NzTagModule } from 'ng-zorro-antd/tag';
 import {
-  formatDuration,
   PLATFORM_META,
   TASK_STATUS_META,
 } from '../../core/labels';
-import { ChannelResult, PlatformResult, Product } from '../../core/models';
+import {
+  ChannelResult,
+  PlatformResult,
+  Product,
+  VerificationAction,
+  VerificationActionEvent,
+} from '../../core/models';
 import { ProductCardComponent } from '../product-card/product-card.component';
 
 @Component({
   selector: 'app-platform-panel',
   imports: [
     NzAlertModule,
+    NzButtonModule,
     NzCollapseModule,
     NzEmptyModule,
     NzIconModule,
@@ -29,7 +36,10 @@ import { ProductCardComponent } from '../product-card/product-card.component';
 })
 export class PlatformPanelComponent {
   readonly result = input.required<PlatformResult>();
+  readonly searchId = input.required<string>();
+  readonly busyTaskId = input<string | null>(null);
   readonly reviewed = output<Product>();
+  readonly verification = output<VerificationActionEvent>();
 
   readonly platform = computed(() => PLATFORM_META[this.result().platform]);
   readonly statusMeta = computed(() => TASK_STATUS_META[this.result().status]);
@@ -37,6 +47,29 @@ export class PlatformPanelComponent {
     () => this.result().status === 'PENDING' || this.result().status === 'RUNNING',
   );
   readonly channels = computed(() => this.result().channels ?? []);
+  readonly excludedProducts = computed(() => this.result().excludedProducts ?? []);
+  readonly recognizedCount = computed(
+    () =>
+      this.result().products.length + this.result().uncertainProducts.length,
+  );
+  readonly detailVerifiedCount = computed(
+    () =>
+      [...this.result().products, ...this.result().uncertainProducts].filter(
+        (product) =>
+          product.match?.priceVerificationStatus === 'VERIFIED' ||
+          product.match?.priceVerificationStatus === 'PARTIAL',
+      ).length,
+  );
+  readonly progressText = computed(
+    () =>
+      `已找到 ${this.result().resultCount} · 已识别 ${this.recognizedCount()} · 详情核验 ${this.detailVerifiedCount()}`,
+  );
+  readonly waitingChannels = computed(() =>
+    this.channels().filter((channel) => channel.status === 'WAITING_MANUAL_VERIFICATION'),
+  );
+  readonly goodsUnavailable = computed(() =>
+    this.channels().some((channel) => channel.errorCode === 'GOODS_SEARCH_UNAVAILABLE'),
+  );
   readonly successfulChannelCount = computed(
     () =>
       this.channels().filter(
@@ -49,6 +82,8 @@ export class PlatformPanelComponent {
       case 'PENDING':
       case 'RUNNING':
         return '正在采集该平台…';
+      case 'WAITING_MANUAL_VERIFICATION':
+        return '等待人工完成平台验证';
       case 'NOT_CONFIGURED':
         return '该平台的来源均未配置';
       case 'FAILED':
@@ -70,14 +105,13 @@ export class PlatformPanelComponent {
     switch (result.status) {
       case 'PENDING':
       case 'RUNNING':
-        return '请稍候，页面会自动刷新各来源结果。';
+      case 'SUCCESS':
+      case 'EMPTY':
+        return '';
+      case 'WAITING_MANUAL_VERIFICATION':
+        return '在打开的浏览器里完成验证码或登录后，点「继续采集」。';
       case 'NOT_CONFIGURED':
-        return (
-          result.errorMessage ??
-          this.channels()
-            .map((channel) => `${channel.providerLabel}：${channel.errorMessage ?? '未配置'}`)
-            .join('；')
-        );
+        return result.errorMessage ?? '该平台未配置数据来源。';
       case 'FAILED':
         return (
           result.errorMessage ??
@@ -86,12 +120,8 @@ export class PlatformPanelComponent {
             .map((channel) => `${channel.providerLabel}：${channel.errorMessage ?? channel.errorCode}`)
             .join('；')
         );
-      case 'EMPTY':
-        return '已配置的来源可正常访问，但本次搜索没有返回候选商品。空结果不等于采集失败。';
       case 'PARTIAL_SUCCESS':
-        return `有效来源 ${this.successfulChannelCount()}/${this.channels().length} 个；采集到 ${result.resultCount} 个候选商品，其中匹配 ${result.matchedCount} 个、待确认 ${result.uncertainCount} 个。失败来源见下方渠道状态。`;
-      case 'SUCCESS':
-        return `${this.channels().length} 个来源均采集成功；候选 ${result.resultCount} 个，其中匹配 ${result.matchedCount} 个、待确认 ${result.uncertainCount} 个。`;
+        return `有效来源 ${this.successfulChannelCount()}/${this.channels().length} 个；匹配 ${result.matchedCount} 个、待确认 ${result.uncertainCount} 个。`;
       default:
         return '';
     }
@@ -100,10 +130,13 @@ export class PlatformPanelComponent {
     switch (this.result().status) {
       case 'FAILED':
         return 'error';
+      case 'WAITING_MANUAL_VERIFICATION':
       case 'NOT_CONFIGURED':
       case 'PARTIAL_SUCCESS':
         return 'warning';
       case 'EMPTY':
+        return 'info';
+      case 'CANCELLED':
         return 'info';
       default:
         return 'success';
@@ -114,7 +147,18 @@ export class PlatformPanelComponent {
     return TASK_STATUS_META[channel.status];
   }
 
-  channelDuration(channel: ChannelResult): string {
-    return formatDuration(channel.durationMs);
+  isBusy(channel: ChannelResult): boolean {
+    return this.busyTaskId() === channel.taskId;
+  }
+
+  emitVerification(channel: ChannelResult, action: VerificationAction): void {
+    this.verification.emit({ taskId: channel.taskId, action });
+  }
+
+  verificationHint(channel: ChannelResult): string {
+    if (channel.errorCode === 'LOGIN_REQUIRED') {
+      return '需要登录：在验证浏览器中完成登录，再点「继续采集」。';
+    }
+    return '遇到平台验证：在验证浏览器中完成后，再点「继续采集」。';
   }
 }

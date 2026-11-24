@@ -8,10 +8,11 @@ export interface DedupeProductShape {
   imageUrls?: string[];
 }
 
+import { normalizeTargetText } from './text.util';
+
 export function normalizeTitle(value: string | null | undefined): string {
-  return (value ?? '')
-    .toLowerCase()
-    .replace(/[\s\-_/\\|,，。.、;；:：!！?？'"“”‘’()（）[\]【】{}<>《》+~～*#@&%$￥¥]/g, '')
+  return normalizeTargetText(value)
+    .replace(/[\-_/\\|,，。.、;；:：!！?？'"“”‘’()（）[\]【】{}<>《》+~～*#@&%$￥¥]/g, '')
     .trim();
 }
 

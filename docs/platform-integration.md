@@ -52,7 +52,7 @@
 
 - `priceType` 使用 `LISTING`：接口没有返回可确认的目标 SKU。
 - 优惠券金额不会从现价中扣除。
-- 接口通常不返回 SKU 详情，因此 AI 倾向于返回 `UNCERTAIN`；这是预期行为，不应强行视为单款匹配。
+- 接口通常不返回 SKU 详情；v2 不会因此自动判为 `UNCERTAIN`：先按类别、系列与标题判断，目标款式无法确认时才返回 `UNCERTAIN`。
 
 ### 1.5 限制
 
@@ -108,7 +108,7 @@
 ### 2.5 限制
 
 - 多多进宝商品体系，不代表拼多多全站商品。
-- 接口不返回可确认的目标 SKU 时，AI 会返回 `UNCERTAIN`。
+- 接口不返回可确认的目标 SKU 时，AI 会结合类别、系列与标题判断；目标款式无法确认时返回 `UNCERTAIN`。
 - 需要应用权限；错误以 `PDD_API_ERROR` 返回。
 
 ---
@@ -162,6 +162,8 @@ npm run browser:login -- douyin
 - 打开 **可见** Chromium，用户自行扫码/账号登录。
 - 登录态保存在 `backend/.auth/douyin/`（持久化用户目录），后续自动复用。
 - 该目录已加入 `.gitignore`，绝不能提交。
+- 可用 `--url=<地址>` 直接打开某个搜索/验证页面，例如：
+  `npm run browser:login -- douyin --url="https://www.douyin.com/search/米饼贴纸?type=goods"`。
 
 解析策略：
 
@@ -175,6 +177,30 @@ npm run browser:login -- douyin
 
 页面结构变化时返回 `PARSE_FAILED`，不会编造商品。
 
+#### 3.2.1 验证码与人工验证恢复
+
+抖音网页搜索可能返回验证码中间页。此时不会自动破解或绕过验证码，也不会把渠道直接判为失败：
+
+1. 自动采集检测到 `CAPTCHA_REQUIRED`（或需要登录的 `LOGIN_REQUIRED`）。
+2. 关闭本次自动浏览器上下文（Playwright 无法把运行中的 headless 上下文切换为 headed，因此必须重新启动）。
+3. 渠道任务状态改为 `WAITING_MANUAL_VERIFICATION`，整个搜索暂停；已成功的渠道与已采集候选保留。
+4. 任务保存 `keyword`、被拦截时的目标 URL、平台 Profile 目录、暂停次数与渠道进度（见 `platform_search_tasks.manual_verification`）。
+5. 前端渠道卡片提供“打开验证浏览器”“关闭浏览器”“继续采集”按钮。
+6. “打开验证浏览器”启动一个 **独立可见** Chromium（始终 headed，使用同一个持久化 Profile）；用户手动完成平台验证。
+7. 点击“继续采集”时，后端先关闭验证浏览器（避免两个进程同时占用同一个用户数据目录），把任务恢复为 `PENDING` 并重新执行该渠道；页面会重新加载并再次检查验证码/登录，**不会假定验证一定成功**。
+8. 每次暂停计数一次；超过 `BROWSER_MANUAL_VERIFICATION_MAX_ATTEMPTS`（默认 3）后渠道明确 `FAILED`，错误码保留 `CAPTCHA_REQUIRED`/`LOGIN_REQUIRED`，不做无限重试。
+9. 服务进程重启不会把等待中的任务判为失败；重启后需要重新打开验证浏览器（界面会提示）。
+
+接口：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `POST` | `/api/searches/:searchId/tasks/:taskId/verification/browser` | 打开独立可见验证浏览器 |
+| `DELETE` | `/api/searches/:searchId/tasks/:taskId/verification/browser` | 关闭验证浏览器 |
+| `POST` | `/api/searches/:searchId/tasks/:taskId/verification/resume` | 关闭浏览器并继续采集 |
+
+限制：验证浏览器与自动采集共用同一个 Profile，不能同时运行；若 `npm run browser:login` 仍在运行，会返回 `BROWSER_PROFILE_BUSY` 并提示先关闭。
+
 ### 3.3 错误分类
 
 | 情况 | 渠道结果 |
@@ -182,18 +208,21 @@ npm run browser:login -- douyin
 | Qovia Key 未配置 | `NOT_CONFIGURED` |
 | Qovia 401 / scope / 余额不足等 | `FAILED`，`QOVIA_API_ERROR` |
 | Qovia 响应字段异常 | `FAILED`，`PARSE_FAILED` |
-| Playwright 未登录 / 出现登录提示 | `BLOCKED`，`LOGIN_REQUIRED` |
-| Playwright 验证码/安全验证/访问异常 | `BLOCKED`，`BLOCKED_BY_PLATFORM` |
+| Playwright 未登录 / 出现登录提示 | `WAITING_MANUAL_VERIFICATION`，`LOGIN_REQUIRED`（人工登录后可恢复） |
+| Playwright 验证码/人机验证 | `WAITING_MANUAL_VERIFICATION`，`CAPTCHA_REQUIRED`（人工验证后可恢复） |
+| 人工验证超过次数上限仍被拦截 | `FAILED`，`CAPTCHA_REQUIRED` / `LOGIN_REQUIRED` |
+| Playwright 其他安全限制/访问异常 | `BLOCKED`，`BLOCKED_BY_PLATFORM`（不提供自动恢复） |
+| 浏览器用户目录被其他进程占用 | `FAILED`，`BROWSER_PROFILE_BUSY` |
 | Playwright 页面明确暂无结果 | `EMPTY` |
 | Playwright 无商品卡片且无明确空结果提示 | `FAILED`，`PARSE_FAILED` |
 | Chromium 未安装 | `NOT_CONFIGURED` |
 
-平台聚合：一个渠道有数据、另一个渠道未配置/为空/失败 → `PARTIAL_SUCCESS`；两个渠道均成功 → `SUCCESS`；均无数据且至少一个失败 → `FAILED`；均无数据且均空 → `EMPTY`；全部未配置 → `NOT_CONFIGURED`。
+平台聚合：任一渠道等待人工验证 → 平台 `WAITING_MANUAL_VERIFICATION`；一个渠道有数据、另一个渠道未配置/为空/失败 → `PARTIAL_SUCCESS`；两个渠道均成功 → `SUCCESS`；均无数据且至少一个失败 → `FAILED`；均无数据且均空 → `EMPTY`；全部未配置 → `NOT_CONFIGURED`。
 
 ### 3.4 限制
 
 - 不自动破解验证码、不绕过登录、不使用无限重试或代理轮换。
-- 当前 Playwright 只提取列表页可见信息，没有进入详情页解析 SKU；SKU 未知时 AI 返回 `UNCERTAIN`。
+- 当前 Playwright 只提取列表页可见信息，没有进入详情页解析 SKU；目标款式无法确认时 AI 返回 `UNCERTAIN`。
 - Qovia 数据地区未声明，价格必须人工核对。
 - 抖音网页端商品搜索可能需要登录，实际可用性以账号与页面为准。
 
@@ -227,13 +256,19 @@ npm run browser:login -- douyin
 - **地区限制**：OKData 文档说明其小红书商品详情为 **海外 App 用户视角**，促销可能与大陆用户不同。观察记录设置 `region = overseas_app_view`，并提示“未确认中国大陆可购买性”。
 - **费用与稳定性**：约 $0.02/次；接口为 Preview，字段可能变化；解析失败返回 `PARSE_FAILED`。
 
-### 4.2 Playwright 网页采集
+### 4.2 Playwright 网页商品搜索
+
+小红书官方 deeplink 定义为：
 
 ```text
-https://www.xiaohongshu.com/search_result?keyword={关键词}&source=web_search_result_notes&type=51
+xhsdiscover://search/result?keyword={关键词}&target_search=goods
 ```
 
-使用 Playwright 正常网页访问；不把开放平台授权接口当作全站搜索入口。
+浏览器无法唤起原生 App，因此 Playwright 渠道会依次探测网页端可用的商品搜索入口（最多 3 个地址，不无限重试）：
+
+1. `https://www.xiaohongshu.com/search_result?keyword={关键词}&source=web_search_result_notes&type=51`：先打开当前可用的搜索页；如果页面存在“商品”Tab，则点击一次进入商品模式。
+2. `https://www.xiaohongshu.com/search_result?keyword={关键词}&target_search=goods`。
+3. `https://www.xiaohongshu.com/search_result?keyword={关键词}&type=goods`。
 
 首次使用前：
 
@@ -241,34 +276,51 @@ https://www.xiaohongshu.com/search_result?keyword={关键词}&source=web_search_
 npm run browser:login -- xiaohongshu
 ```
 
-登录态保存在 `backend/.auth/xiaohongshu/`。
+登录态保存在 `backend/.auth/xiaohongshu/`。遇到验证码/登录拦截时与抖音一致进入 `WAITING_MANUAL_VERIFICATION`，可打开验证浏览器人工处理后继续。
 
-解析策略：
+商品与笔记分离：
 
-- 商品相关链接：链接中包含 `goods` / `item` / `product`，且域名属于 `xiaohongshu.com` / `xhslink.com`。
-- 笔记链接（`/explore/`、`/discovery_item/`、`/discovery/item/`）只计数，不作为商品。
-- 只找到笔记、没有商品链接：`FAILED` / `PARSE_FAILED`，明确提示不能把笔记当作商品。
-- 页面明确无结果：`EMPTY`。
-- 登录/验证码/异常访问：`BLOCKED`。
+- 只接受明确的商品详情链接：路径包含 `/goods-detail/`、`/goods/`、`/product/`，或查询参数包含 `goods_id` / `product_id`，且域名属于 `xiaohongshu.com` / `xhslink.com`。
+- 笔记链接（`/explore/`、`/discovery_item/`、`/discovery/item/`）只计数，**永远不进入商品集合**，也不会写入候选商品。
+- 商品卡片提取：名称（标题/名称节点）、图片（`img.currentSrc/src`）、价格（价格节点可见文本，统一价格解析）、商品链接。
+- 只有在确认进入商品搜索模式（URL 含 `target_search=goods`/`type=goods`，或“商品”Tab 处于选中状态）且页面明确无结果时，才返回 `EMPTY`。
+- 只有笔记、没有商品入口或无法确认商品模式时，返回 `GOODS_SEARCH_UNAVAILABLE`，而不是 `PARSE_FAILED`，也不会把笔记归类为商品。
 - 价格使用统一可见价格解析，不把券后价、区间价或起售价冒充普通现价。
 
-### 4.3 限制与地区
+`GET /api/providers/status` 和搜索详情会保留渠道错误码 `GOODS_SEARCH_UNAVAILABLE`；前端会明确提示“网页端无商品搜索入口”。
 
-- 小红书搜索结果大量是笔记，商品卡片可能不出现或需要登录/特定入口；不会伪造商品。
-- 当前未进入商品详情页解析 SKU；SKU 无法确认时 AI 返回 `UNCERTAIN`。
+### 4.3 原生 App / Appium 方案研究（未接入）
+
+如果业务必须使用商城商品搜索，网页端可能不足，需要原生 App。可行性研究结论：
+
+1. **Deep Link**：`adb shell am start -a android.intent.action.VIEW -d "xhsdiscover://search/result?keyword=<关键词>&target_search=goods"` 可直接打开小红书 App 的商品搜索结果页（需已安装 App 并登录）。Playwright/Chromium 无法调用该 scheme。
+2. **Android 模拟器**：需要安装小红书 App、登录账号，并保证模拟器网络可访问商城；账号与设备风控可能触发验证码，仍需人工处理。模拟器上的商品页结构与网页不同，不能复用现有 DOM 解析。
+3. **Appium 方案**：使用 Appium + UiAutomator2 驱动 `com.xingin.xhs`，通过 resource-id/text 定位商品卡片，读取名称、价格、图片与商品详情入口。适合作为 **独立采集模块**，不应塞进现有 Playwright 模块。
+4. **限制与风险**：无官方开放接口、页面与控件 ID 随版本变化、模拟器可能被判定为异常环境、需要账号登录与人工验证、合规与平台条款风险高。当前版本**未接入** Appium，也未内置模拟器控制；代码中不会伪造这一能力。
+5. **建议**：优先使用 OKData 商城商品接口；若要自建 App 采集，单独建立 `providers/xiaohongshu-app` 模块和独立任务类型，并沿用“不绕过验证码、不伪造数据、失败明确返回”的原则。
+
+当前网页端如果无法进入商城商品搜索，会明确返回 `GOODS_SEARCH_UNAVAILABLE`。
+
+### 4.4 限制与地区
+
+- 小红书网页端是否提供商品搜索入口取决于账号、地区和页面版本；无法进入时返回 `GOODS_SEARCH_UNAVAILABLE`，不会把笔记当作商品。
+- 商品搜索结果大量是笔记或混合卡片，系统会严格区分；商品卡片结构变化时返回 `PARSE_FAILED`。
+- 当前未进入商品详情页解析 SKU；目标款式无法确认时 AI 返回 `UNCERTAIN`。
 - 第三方 API 的地区/促销差异必须通过观察记录和前端提示保留，不能把海外视角价格当作大陆默认价格。
-- 需要人工核对商品链接、店铺、SKU 与实际购买地区。
+- 需要人工核对商品链接、店铺、SKU 与地理位置。
 
 ---
 
 ## 5. 浏览器采集通用机制
 
 - 每个平台独立的持久化用户目录；登录一次后复用。
-- 同一进程内使用串行锁，避免同时启动多个浏览器实例。
-- 默认 `PLAYWRIGHT_HEADLESS=false`，便于观察和登录；生产/自动化可设为 `true`。
+- 同一进程内使用串行锁，自动采集、打开验证浏览器与关闭浏览器都经过同一把锁，避免并发启动；**同一个用户数据目录同一时间只允许一个浏览器进程**。
+- 默认 `PLAYWRIGHT_HEADLESS=false`，便于观察和登录；生产/自动化可设为 `true`。验证浏览器始终以 headed 启动，因为 Playwright 不能把运行中的 headless 上下文切换为 headed。
+- 可选 `PLAYWRIGHT_CHANNEL=chrome` 或 `msedge`：某些环境下 Playwright 自带 Chromium 的可见窗口无法启动（`spawn UNKNOWN` / 终端沙箱限制），此时使用系统安装的浏览器；登录目录仍是 `backend/.auth/<platform>/`，不操作用户日常浏览器配置。
 - 域名白名单：`taobao.com`、`tmall.com`、`douyin.com`、`jinritemai.com`、`xiaohongshu.com`、`xhslink.com`、`pinduoduo.com`、`yangkeduo.com`。浏览器模块拒绝访问白名单外地址。
-- 页面出现“验证码 / 安全验证 / 访问过于频繁 / 访问异常”等关键词时立即终止本平台采集，交由人工处理。
-- 等待与页面结构解析使用有限超时，不无限重试。
+- 页面出现验证码/登录提示时：抖音、小红书的浏览器渠道暂停为 `WAITING_MANUAL_VERIFICATION`，由用户在独立可见浏览器中处理；其他安全限制（`BLOCKED_BY_PLATFORM`）直接终止本渠道，不提供“绕过”能力。
+- 验证码/登录最多暂停 `BROWSER_MANUAL_VERIFICATION_MAX_ATTEMPTS` 次（默认 3），超过后明确失败；等待/页面解析使用有限超时，不无限重试。
+- 恢复采集只重跑未结束的渠道；已成功/失败/空/未配置的渠道不重复请求，第三方 API 不会因恢复而被重复计费。
 - 请求间隔由 `PLATFORM_REQUEST_DELAY_MS` 控制；平台之间顺序执行。
 
 ---

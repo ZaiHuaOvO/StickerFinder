@@ -404,16 +404,50 @@ async function checkPinduoduo() {
 }
 
 function checkPlaywright() {
-  try {
-    const executable = chromium.executablePath();
-    if (!executable || !fs.existsSync(executable)) {
-      record('Playwright', 'FAIL', 'Chromium 未安装，请运行 npm run playwright:install');
+  const channel = value('PLAYWRIGHT_CHANNEL');
+  if (channel) {
+    const candidates =
+      channel === 'chrome'
+        ? [
+            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            '/usr/bin/google-chrome',
+            '/usr/bin/google-chrome-stable',
+          ]
+        : channel === 'msedge'
+          ? [
+              'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
+              'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
+              '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+              '/usr/bin/microsoft-edge',
+            ]
+          : [];
+    if (candidates.length === 0) {
+      record(
+        'Playwright',
+        'FAIL',
+        `PLAYWRIGHT_CHANNEL=${channel} 不受支持，请使用 chrome 或 msedge`,
+      );
       return;
     }
-    record('Playwright', 'OK', 'Chromium 已安装');
-  } catch (error) {
-    record('Playwright', 'FAIL', String(error.message).slice(0, 200));
-    return;
+    if (!candidates.some((candidate) => fs.existsSync(candidate))) {
+      record('Playwright', 'FAIL', `未找到系统安装的 ${channel} 浏览器`);
+      return;
+    }
+    record('Playwright', 'OK', `使用系统 ${channel} 浏览器（独立登录目录）`);
+  } else {
+    try {
+      const executable = chromium.executablePath();
+      if (!executable || !fs.existsSync(executable)) {
+        record('Playwright', 'FAIL', 'Chromium 未安装，请运行 npm run playwright:install');
+        return;
+      }
+      record('Playwright', 'OK', 'Playwright 自带 Chromium 已安装');
+    } catch (error) {
+      record('Playwright', 'FAIL', String(error.message).slice(0, 200));
+      return;
+    }
   }
 
   const root = path.resolve(process.cwd(), value('BROWSER_USER_DATA_DIR') || '.auth');
@@ -441,6 +475,7 @@ async function main() {
   checkOptional('AI_VISION_ENABLED', '未设置，默认关闭');
   checkOptional('DEEPSEEK_MODEL', '未设置，默认 deepseek-flash');
   checkOptional('PLAYWRIGHT_HEADLESS', '未设置，默认可见浏览器');
+  checkOptional('PLAYWRIGHT_CHANNEL', '未设置，使用 Playwright 自带 Chromium');
 
   await checkDatabase();
   await checkDeepseek();

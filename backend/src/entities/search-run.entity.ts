@@ -25,6 +25,12 @@ export class SearchRun {
   @Column({ type: 'simple-json' })
   aliases: string[] = [];
 
+  @Column({ name: 'series_aliases', type: 'simple-json', nullable: true })
+  seriesAliases: string[] | null = null;
+
+  @Column({ name: 'brand_names', type: 'simple-json', nullable: true })
+  brandNames: string[] | null = null;
+
   @Column({ name: 'reference_image', type: 'varchar', length: 500, nullable: true })
   referenceImage: string | null = null;
 

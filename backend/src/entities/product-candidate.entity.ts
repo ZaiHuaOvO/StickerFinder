@@ -11,6 +11,7 @@ import {
 } from 'typeorm';
 import { PlatformEnum, SourceTypeEnum } from '../common/enums';
 import { PriceInfo, SkuOption } from '../common/interfaces/price.interface';
+import { WholesalePriceInfo } from '../common/interfaces/wholesale-price.interface';
 import { ProductMatchResult } from './product-match-result.entity';
 import { ProductObservation } from './product-observation.entity';
 import { SearchRun } from './search-run.entity';
@@ -54,6 +55,10 @@ export class ProductCandidate {
 
   @Column({ name: 'group_price_data', type: 'simple-json', nullable: true })
   groupPriceData: PriceInfo | null = null;
+
+  /** 1688 等批发平台的采购价格，独立于零售 priceData */
+  @Column({ name: 'wholesale_price_data', type: 'simple-json', nullable: true })
+  wholesalePriceData: WholesalePriceInfo | null = null;
 
   @Column({ name: 'source_type', type: 'varchar', length: 32 })
   sourceType: SourceTypeEnum;

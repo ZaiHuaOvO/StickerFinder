@@ -5,15 +5,12 @@
       <h3>{{ platform().label }}</h3>
       <nz-tag [nzColor]="statusMeta().tone">{{ statusMeta().label }}</nz-tag>
     </div>
-    <div class="panel-meta">
-      <span>{{ channels().length }} 个来源</span>
-      @if (result().resultCount > 0) {
-        <span>候选 {{ result().resultCount }}</span>
-      }
-    </div>
+    <span class="panel-count">{{ progressText() }}</span>
   </div>
 
-  <div class="channel-list">
+  <details class="channel-details" [open]="waitingChannels().length > 0">
+    <summary>来源状态</summary>
+    <div class="channel-list">
     @for (channel of channels(); track channel.taskId) {
       <div class="channel-card">
         <div class="channel-head">
@@ -22,36 +19,68 @@
             {{ channelStatus(channel).label }}
           </nz-tag>
         </div>
-        <div class="channel-meta">
-          {{ channel.sourceLabel }}
-          @if (channel.resultCount > 0) {
-            · {{ channel.resultCount }} 个
-          }
-          @if (channel.durationMs !== null) {
-            · {{ channelDuration(channel) }}
-          }
-        </div>
         @if (channel.errorMessage) {
-          <div class="channel-error">
-            {{ channel.errorCode ? channel.errorCode + ' · ' : '' }}{{ channel.errorMessage }}
-          </div>
+          <div class="channel-error">{{ channel.errorMessage }}</div>
         }
-        @if (channel.note) {
-          <div class="channel-note">{{ channel.note }}</div>
+        @if (channel.status === 'WAITING_MANUAL_VERIFICATION') {
+          <div class="channel-verification">
+            <p class="verification-hint">{{ verificationHint(channel) }}</p>
+            <div class="verification-actions">
+              <button
+                nz-button
+                nzSize="small"
+                type="button"
+                [nzLoading]="isBusy(channel)"
+                (click)="emitVerification(channel, 'open')"
+              >
+                <span nz-icon nzType="export"></span>
+                {{ channel.manualBrowserOpen ? '重新打开验证浏览器' : '打开验证浏览器' }}
+              </button>
+              @if (channel.manualBrowserOpen) {
+                <button
+                  nz-button
+                  nzSize="small"
+                  type="button"
+                  [nzLoading]="isBusy(channel)"
+                  (click)="emitVerification(channel, 'close')"
+                >
+                  关闭浏览器
+                </button>
+              }
+              <button
+                nz-button
+                nzType="primary"
+                nzSize="small"
+                type="button"
+                [nzLoading]="isBusy(channel)"
+                (click)="emitVerification(channel, 'resume')"
+              >
+                继续采集
+              </button>
+            </div>
+            @if (channel.manualBrowserOpen) {
+              <div class="verification-open">验证浏览器窗口已打开。</div>
+            }
+          </div>
         }
       </div>
     }
-  </div>
+    </div>
+  </details>
+
+  @if (goodsUnavailable()) {
+    <div class="note-line note-line--warning">
+      <span nz-icon nzType="warning"></span>
+      <span>小红书网页端没有商城商品搜索入口，未采集商品。</span>
+    </div>
+  }
 
   @if (isWorking()) {
     <div class="working">
       <nz-spin nzSimple nzSize="large"></nz-spin>
-      <div>
-        <strong>{{ bannerTitle() }}</strong>
-        <p>{{ bannerDescription() }}</p>
-      </div>
+      <strong>{{ bannerTitle() }}</strong>
     </div>
-  } @else {
+  } @else if (bannerDescription()) {
     <nz-alert
       class="banner"
       nzShowIcon
@@ -59,29 +88,6 @@
       [nzMessage]="bannerTitle()"
       [nzDescription]="bannerDescription()"
     />
-  }
-
-  @if (result().note) {
-    <div class="note-line">
-      <span nz-icon nzType="info-circle"></span>
-      <span>{{ result().note }}</span>
-    </div>
-  }
-
-  @if (
-    (result().status === 'PARTIAL_SUCCESS' ||
-      result().status === 'FAILED' ||
-      result().status === 'NOT_CONFIGURED') &&
-    (result().products.length > 0 || result().uncertainProducts.length > 0)
-  ) {
-    <div class="note-line">
-      <span nz-icon nzType="warning"></span>
-      @if (result().status === 'PARTIAL_SUCCESS') {
-        <span>部分来源采集成功或存在产品级错误；以下为已成功采集并识别的部分商品。</span>
-      } @else {
-        <span>该平台最终状态为「{{ statusMeta().label }}」，以下为失败或中断前已采集并识别的部分商品。</span>
-      }
-    </div>
   }
 
   @if (
@@ -93,9 +99,9 @@
       <div class="no-match">
         <span nz-icon nzType="inbox"></span>
         @if (result().uncertainCount > 0) {
-          没有商品通过 AI 确认。请查看下方待确认区域，并打开商品页面人工核对。
+          没有商品通过 AI 确认，见下方待确认。
         } @else {
-          所有候选商品都被判定为不匹配，已隐藏；原始数据仍保存在数据库中，便于复核。
+          候选商品均不匹配，已隐藏。
         }
       </div>
     }
@@ -123,7 +129,6 @@
                 待确认商品
                 <span class="count-pill">{{ result().uncertainCount }}</span>
               </span>
-              <span class="uncertain-hint">AI 信息不足或判断失败，需要人工打开商品页面核对</span>
             </div>
           </ng-template>
           <div class="product-grid">
@@ -136,14 +141,23 @@
     }
 
     @if (result().excludedCount > 0) {
-      <p class="excluded-line">
-        另有 {{ result().excludedCount }} 个候选商品被判定为不匹配，已隐藏（原始数据仍保存在数据库中，便于复核）。
-      </p>
+      <details class="excluded-box">
+        <summary>已排除 {{ result().excludedCount }} 个，展开查看</summary>
+        <ul class="excluded-list">
+          @for (product of excludedProducts(); track product.id) {
+            <li>
+              <a [href]="product.productUrl" target="_blank" rel="noopener noreferrer">
+                {{ product.title }}
+              </a>
+            </li>
+          }
+        </ul>
+      </details>
     }
   }
 
   @if (result().status === 'EMPTY') {
-    <nz-empty class="empty-state" nzNotFoundImage="simple" nzNotFoundContent="未找到符合条件的商品">
+    <nz-empty class="empty-state" nzNotFoundImage="simple" nzNotFoundContent="未找到商品">
     </nz-empty>
   }
 </div>

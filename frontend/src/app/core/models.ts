@@ -1,6 +1,17 @@
-export type Platform = 'taobao' | 'douyin' | 'xiaohongshu' | 'pinduoduo';
+export type Platform =
+  | 'taobao'
+  | 'douyin'
+  | 'xiaohongshu'
+  | 'alibaba1688'
+  | 'pinduoduo';
 
-export const PLATFORM_ORDER: Platform[] = ['taobao', 'douyin', 'xiaohongshu', 'pinduoduo'];
+export const PLATFORM_ORDER: Platform[] = [
+  'taobao',
+  'douyin',
+  'xiaohongshu',
+  'alibaba1688',
+  'pinduoduo',
+];
 
 export type TaskStatus =
   | 'PENDING'
@@ -10,7 +21,9 @@ export type TaskStatus =
   | 'EMPTY'
   | 'FAILED'
   | 'NOT_CONFIGURED'
-  | 'BLOCKED';
+  | 'BLOCKED'
+  | 'CANCELLED'
+  | 'WAITING_MANUAL_VERIFICATION';
 
 export type PlatformStatus =
   | 'PENDING'
@@ -19,11 +32,51 @@ export type PlatformStatus =
   | 'PARTIAL_SUCCESS'
   | 'EMPTY'
   | 'FAILED'
-  | 'NOT_CONFIGURED';
+  | 'NOT_CONFIGURED'
+  | 'CANCELLED'
+  | 'WAITING_MANUAL_VERIFICATION';
 
-export type SearchRunStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'INTERRUPTED';
+export type SearchRunStatus =
+  | 'PENDING'
+  | 'RUNNING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'INTERRUPTED'
+  | 'CANCELLED'
+  | 'WAITING_MANUAL_VERIFICATION';
 
 export type MatchStatus = 'MATCH' | 'NO_MATCH' | 'UNCERTAIN';
+
+export type CandidateRelevance = 'HIGH' | 'MEDIUM' | 'LOW' | 'NONE';
+
+export type MatchAssessment = 'MATCH' | 'CONFLICT' | 'UNKNOWN';
+
+export type VisualMatch =
+  | 'VISUAL_EXACT'
+  | 'VISUAL_SIMILAR'
+  | 'VISUAL_ABSENT'
+  | 'VISUAL_UNAVAILABLE';
+
+export type NextAction =
+  | 'NONE'
+  | 'FETCH_PRODUCT_DETAIL'
+  | 'FETCH_SKU'
+  | 'FETCH_IMAGES'
+  | 'MANUAL_REVIEW';
+
+export type SkuVerificationStatus =
+  | 'PENDING'
+  | 'VERIFIED'
+  | 'PARTIAL'
+  | 'NOT_AVAILABLE'
+  | 'FAILED';
+
+export type PriceVerificationStatus =
+  | 'PENDING'
+  | 'VERIFIED'
+  | 'PARTIAL'
+  | 'UNVERIFIED'
+  | 'FAILED';
 
 export type MatchType =
   | 'EXACT_SINGLE'
@@ -67,26 +120,68 @@ export interface SkuOption {
   imageUrl?: string;
 }
 
+export interface PriceTier {
+  minQuantity: number;
+  price: number;
+}
+
+/** 1688 批发采购价，独立于零售 PriceInfo */
+export interface WholesalePriceInfo {
+  priceMin: number | null;
+  priceMax: number | null;
+  currency: string | null;
+  unit: string | null;
+  minOrderQuantity: number | null;
+  priceTiers: PriceTier[];
+  note?: string | null;
+}
+
 export interface SkuDecision {
   skuId: string;
   matchStatus: 'MATCH' | 'NO_MATCH' | 'UNCERTAIN';
   reason: string;
 }
 
+export interface SkuManualDecision {
+  skuId: string;
+  decision: 'TARGET' | 'BUNDLE' | 'EXCLUDED';
+  note?: string | null;
+  reviewedAt: string;
+}
+
+export interface EvidenceEntry {
+  sourceField: 'title' | 'description' | 'sku' | 'image';
+  content: string;
+  interpretation: string;
+}
+
 export interface ProductMatch {
   aiStatus: AiStatus;
   matchStatus: MatchStatus;
   matchType: MatchType | null;
+  candidateRelevance: CandidateRelevance | null;
+  categoryMatch: MatchAssessment | null;
+  seriesMatch: MatchAssessment | null;
+  targetItemMatch: MatchAssessment | null;
+  visualMatch: VisualMatch | null;
   confidence: number | null;
   summary: string | null;
   reason: string | null;
   matchedContents: string[];
   matchedSkuIds: string[];
   skuDecisions: SkuDecision[];
-  evidence: string[];
+  evidence: EvidenceEntry[];
+  nextAction: NextAction | null;
+  rawMatchStatus: MatchStatus | null;
+  rawConfidence: number | null;
+  safetyWarnings: string[];
+  safetyBlockers: string[];
+  skuVerificationStatus: SkuVerificationStatus;
+  priceVerificationStatus: PriceVerificationStatus;
   needsManualReview: boolean;
   manualDecision: ManualDecision;
   manualNote: string | null;
+  manualSkuDecisions: SkuManualDecision[];
   reviewedAt: string | null;
   aiModel: string | null;
   aiError: string | null;
@@ -106,6 +201,7 @@ export interface ProductObservation {
   price: PriceInfo | null;
   originalPrice: PriceInfo | null;
   groupPrice: PriceInfo | null;
+  wholesalePrice: WholesalePriceInfo | null;
   salesText: string | null;
   rating: number | null;
   region: string | null;
@@ -128,12 +224,34 @@ export interface Product {
   skuOptions: SkuOption[];
   price: PriceInfo | null;
   groupPrice: PriceInfo | null;
+  wholesalePrice: WholesalePriceInfo | null;
   sourceType: SourceType;
   collectedAt: string;
   effectiveMatchStatus: MatchStatus;
   match: ProductMatch | null;
   observations: ProductObservation[];
   priceConflict: boolean;
+}
+
+export interface ManualVerificationProgress {
+  completedTasks: number;
+  totalTasks: number;
+  completedPlatforms: string[];
+  remainingPlatforms: string[];
+}
+
+export interface ManualVerificationState {
+  keyword: string;
+  targetUrl: string;
+  profileDir: string;
+  attempts: number;
+  maxAttempts: number;
+  lastErrorCode: string | null;
+  lastErrorMessage: string | null;
+  requestedAt: string;
+  openedAt: string | null;
+  resumedAt: string | null;
+  progress: ManualVerificationProgress;
 }
 
 export interface ChannelResult {
@@ -148,6 +266,11 @@ export interface ChannelResult {
   errorCode: string | null;
   errorMessage: string | null;
   note: string | null;
+  apiRequestCount: number;
+  chargedUsd: number | null;
+  lastRequestId: string | null;
+  manualVerification: ManualVerificationState | null;
+  manualBrowserOpen: boolean;
   startedAt: string | null;
   completedAt: string | null;
   durationMs: number | null;
@@ -169,6 +292,7 @@ export interface PlatformResult {
   channels: ChannelResult[];
   products: Product[];
   uncertainProducts: Product[];
+  excludedProducts: Product[];
 }
 
 export interface SearchDetail {
@@ -177,6 +301,8 @@ export interface SearchDetail {
   targetName: string;
   seriesName: string | null;
   aliases: string[];
+  seriesAliases: string[];
+  brandNames: string[];
   referenceImageProvided: boolean;
   errorMessage: string | null;
   startedAt: string;
@@ -217,7 +343,10 @@ export interface CreateSearchPayload {
   targetName: string;
   seriesName?: string;
   aliases?: string[];
+  seriesAliases?: string[];
+  brandNames?: string[];
   referenceImageId?: string | null;
+  platforms?: Platform[];
 }
 
 export interface UploadedImage {
@@ -226,15 +355,23 @@ export interface UploadedImage {
 }
 
 export interface ReviewPayload {
-  decision: 'MATCH' | 'NO_MATCH' | 'PENDING';
+  decision?: 'MATCH' | 'NO_MATCH' | 'PENDING';
   note?: string;
+  skuDecisions?: Array<{
+    skuId: string;
+    decision: 'TARGET' | 'BUNDLE' | 'EXCLUDED' | 'PENDING';
+    note?: string;
+  }>;
 }
 
 export interface SearchFormPayload {
   targetName: string;
   seriesName?: string;
   aliases: string[];
+  seriesAliases: string[];
+  brandNames: string[];
   referenceImageId: string | null;
+  platforms: Platform[];
 }
 
 export interface SearchRunSummary {
@@ -245,4 +382,28 @@ export interface SearchRunSummary {
   startedAt: string;
   completedAt: string | null;
   errorMessage: string | null;
+}
+
+export interface VerificationBrowserInfo {
+  opened: boolean;
+  url: string;
+  profileDir: string;
+  openedAt: string;
+  alreadyOpen: boolean;
+  message: string;
+}
+
+export interface VerificationResumeInfo {
+  resumed: boolean;
+  status: SearchRunStatus;
+  attempts: number;
+  maxAttempts: number;
+  targetUrl: string | null;
+}
+
+export type VerificationAction = 'open' | 'close' | 'resume';
+
+export interface VerificationActionEvent {
+  taskId: string;
+  action: VerificationAction;
 }

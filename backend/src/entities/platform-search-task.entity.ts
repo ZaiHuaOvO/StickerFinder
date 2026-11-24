@@ -14,6 +14,7 @@ import {
   ProviderKeyEnum,
   SourceTypeEnum,
 } from '../common/enums';
+import { ManualVerificationState } from '../common/interfaces/manual-verification.interface';
 import { ProductObservation } from './product-observation.entity';
 import { SearchRun } from './search-run.entity';
 
@@ -49,6 +50,22 @@ export class PlatformSearchTask {
 
   @Column({ name: 'note', type: 'text', nullable: true })
   note: string | null = null;
+
+  /** 本轮该渠道实际发起的收费 API 请求次数（以服务商响应为准） */
+  @Column({ name: 'api_request_count', type: 'int', default: 0 })
+  apiRequestCount: number = 0;
+
+  /** 服务商 billing 返回的实际扣费（美元）；没有 billing 时为 null，不做本地估算 */
+  @Column({ name: 'charged_usd', type: 'float', nullable: true })
+  chargedUsd: number | null = null;
+
+  /** 服务商返回的最近一次请求 ID，便于对账 */
+  @Column({ name: 'last_request_id', type: 'varchar', length: 200, nullable: true })
+  lastRequestId: string | null = null;
+
+  /** 等待人工验证时保存的关键词、目标 URL、Profile 与进度 */
+  @Column({ name: 'manual_verification', type: 'simple-json', nullable: true })
+  manualVerification: ManualVerificationState | null = null;
 
   @Column({ name: 'started_at', type: 'datetime', nullable: true })
   startedAt: Date | null = null;

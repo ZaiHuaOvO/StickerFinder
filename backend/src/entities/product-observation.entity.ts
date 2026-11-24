@@ -14,6 +14,7 @@ import {
   ProviderKeyEnum,
 } from '../common/enums';
 import { PriceInfo, SkuOption } from '../common/interfaces/price.interface';
+import { WholesalePriceInfo } from '../common/interfaces/wholesale-price.interface';
 import { PlatformSearchTask } from './platform-search-task.entity';
 import { ProductCandidate } from './product-candidate.entity';
 import { SearchRun } from './search-run.entity';
@@ -76,6 +77,10 @@ export class ProductObservation {
 
   @Column({ name: 'group_price_data', type: 'simple-json', nullable: true })
   groupPriceData: PriceInfo | null = null;
+
+  /** 1688 等批发平台的采购价格，独立于零售 priceData */
+  @Column({ name: 'wholesale_price_data', type: 'simple-json', nullable: true })
+  wholesalePriceData: WholesalePriceInfo | null = null;
 
   @Column({ name: 'sales_text', type: 'varchar', length: 100, nullable: true })
   salesText: string | null = null;

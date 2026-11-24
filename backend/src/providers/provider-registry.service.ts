@@ -6,10 +6,14 @@ import {
   ProviderStatus,
 } from '../common/interfaces/provider.interface';
 import { PROVIDER_LABELS } from '../common/platform-channels';
+import { Alibaba1688EveryInfraProvider } from './alibaba1688/alibaba1688-everyinfra.provider';
 import { DouyinThirdPartyProvider } from './douyin/douyin-third-party.provider';
+import { DouyinEveryInfraProvider } from './douyin/douyin-everyinfra.provider';
 import { DouyinPlaywrightProvider } from './douyin/douyin.provider';
 import { PinduoduoProvider } from './pinduoduo/pinduoduo.provider';
+import { TaobaoEveryInfraProvider } from './taobao/taobao-everyinfra.provider';
 import { TaobaoProvider } from './taobao/taobao.provider';
+import { XiaohongshuEveryInfraProvider } from './xiaohongshu/xiaohongshu-everyinfra.provider';
 import { XiaohongshuThirdPartyProvider } from './xiaohongshu/okdata.provider';
 import { XiaohongshuPlaywrightProvider } from './xiaohongshu/xiaohongshu.provider';
 
@@ -20,19 +24,27 @@ export class ProviderRegistryService {
 
   constructor(
     taobao: TaobaoProvider,
+    taobaoEveryInfra: TaobaoEveryInfraProvider,
     pinduoduo: PinduoduoProvider,
     douyinThirdParty: DouyinThirdPartyProvider,
+    douyinEveryInfra: DouyinEveryInfraProvider,
     douyinPlaywright: DouyinPlaywrightProvider,
     xiaohongshuThirdParty: XiaohongshuThirdPartyProvider,
+    xiaohongshuEveryInfra: XiaohongshuEveryInfraProvider,
     xiaohongshuPlaywright: XiaohongshuPlaywrightProvider,
+    alibaba1688EveryInfra: Alibaba1688EveryInfraProvider,
   ) {
     const all = [
       taobao,
+      taobaoEveryInfra,
       pinduoduo,
       douyinThirdParty,
+      douyinEveryInfra,
       douyinPlaywright,
       xiaohongshuThirdParty,
+      xiaohongshuEveryInfra,
       xiaohongshuPlaywright,
+      alibaba1688EveryInfra,
     ];
     for (const provider of all) {
       this.providers.set(this.key(provider.platform, provider.key), provider);

@@ -24,6 +24,15 @@
   --tone: #c53030;
 }
 
+.platform-panel.tone-alibaba1688 {
+  --tone: #e8590c;
+}
+
+.panel-count {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .panel-head {
   display: flex;
   align-items: center;
@@ -60,6 +69,17 @@
   font-size: 12px;
 }
 
+.channel-details {
+  margin-bottom: 12px;
+}
+
+.channel-details > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
 .channel-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -87,12 +107,6 @@
   font-weight: 650;
 }
 
-.channel-meta {
-  margin-top: 5px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
 .channel-error {
   margin-top: 6px;
   color: #b02b1d;
@@ -101,12 +115,38 @@
   white-space: pre-line;
 }
 
-.channel-note {
-  margin-top: 6px;
-  color: var(--muted);
+.channel-verification {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: #fff8e8;
+  border: 1px solid #f0d9a8;
+  border-radius: 10px;
+}
+
+.verification-hint {
+  margin: 0 0 8px;
+  color: #8a5a10;
   font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-line;
+  line-height: 1.6;
+}
+
+.verification-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.verification-open {
+  margin-top: 8px;
+  color: #2f7a5f;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.note-line--warning {
+  background: #fff8e8;
+  color: #8a5a10;
 }
 
 .working {
@@ -120,14 +160,7 @@
 
 .working strong {
   display: block;
-  margin-bottom: 4px;
   font-size: 14px;
-}
-
-.working p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
 }
 
 .banner {
@@ -225,16 +258,24 @@
   text-align: center;
 }
 
-.uncertain-hint {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 400;
-}
-
-.excluded-line {
+.excluded-box {
   margin: 18px 0 0;
   color: var(--muted);
   font-size: 12px;
+}
+
+.excluded-box summary {
+  cursor: pointer;
+}
+
+.excluded-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  line-height: 1.6;
+}
+
+.excluded-list a {
+  color: var(--ink-soft);
 }
 
 .empty-state {
